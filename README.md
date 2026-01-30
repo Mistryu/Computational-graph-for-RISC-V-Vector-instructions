@@ -15,10 +15,6 @@ cd trace_visualisation
 ### 2. Create Python Virtual Environment
 
 ```bash
-<<<<<<< HEAD
-=======
-# Create virtual environment
->>>>>>> 4e992e5c57908539810677737138e5f977cfdf57
 python3 -m venv venv
 
 # Activate virtual environment

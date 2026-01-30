@@ -4,10 +4,11 @@ import dash_cytoscape as cyto
 from pathlib import Path
 import argparse
 import sys
-from trace_visualisation.helper import build_elements, format_hex_data
+from trace_visualisation.helper import build_elements, format_hex_data, decode_vtype, decode_vcsr
 from .style import CYTOSCAPE_STYLESHEET, LAYOUT_STYLES
 
 cyto.load_extra_layouts()
+
 
 def create_app(graph_file: str):
     app = dash.Dash(__name__)
@@ -193,20 +194,55 @@ def create_app(graph_file: str):
         if len(vec_section) > 1:
             details.extend(vec_section)
         
-        # Add RVV state at time of execution
+        # Add RVV state at time of execution with decoded fields
         rvv_state = instr.get('rvv_state', {})
         if rvv_state and any(rvv_state.values()):
-            details.extend([
+            vtype_decoded = decode_vtype(rvv_state.get('vtype'))
+            vcsr_decoded = decode_vcsr(rvv_state.get('vcsr'))
+            
+            rvv_section = [
                 html.Hr(),
+                html.H4('RVV State (at execution)', style={'marginBottom': '10px'}),
+                
+                # VL
+                html.P([html.Strong('VL: '), 
+                       str(rvv_state.get('vl', 'N/A'))],
+                       style={'marginBottom': '8px'}),
+                
+                # VTYPE
                 html.Div([
-                    html.H4('RVV State (at execution)', style={'marginBottom': '10px'}),
-                    html.P([html.Strong('VL: '), str(rvv_state.get('vl', 'N/A'))]),
                     html.P([html.Strong('VTYPE: '), str(rvv_state.get('vtype', 'N/A'))]),
-                    html.P([html.Strong('VSTART: '), str(rvv_state.get('vstart', 'N/A'))]),
+                    html.Ul([
+                        html.Li(f"vill: {vtype_decoded.get('vill', 'N/A')}"),
+                        html.Li(f"vma: {vtype_decoded.get('vma', 'N/A')}"),
+                        html.Li(f"vta: {vtype_decoded.get('vta', 'N/A')}"),
+                        html.Li(f"vsew: {vtype_decoded.get('vsew', 'N/A')}"),
+                        html.Li(f"vlmul: {vtype_decoded.get('vlmul', 'N/A')}")
+                    ], style={'marginLeft': '0px', 'fontSize': '16px', 'color': "#030303"})
+                ], style={'marginBottom': '8px'}) if vtype_decoded else None,
+                
+                # VSTART
+                html.P([html.Strong('VSTART: '), 
+                       str(rvv_state.get('vstart', 'N/A'))],
+                       style={'marginBottom': '8px'}),
+                
+                # VCSR
+                html.Div([
                     html.P([html.Strong('VCSR: '), str(rvv_state.get('vcsr', 'N/A'))]),
-                    html.P([html.Strong('VLENB: '), str(rvv_state.get('vlenb', 'N/A'))]),
-                ])
-            ])
+                    html.Ul([
+                        html.Li(f"vxsat (fixed-point saturation): {vcsr_decoded.get('vxsat', 'N/A')}"),
+                        html.Li(f"vxrm (rounding mode): {vcsr_decoded.get('vxrm', 'N/A')}")
+                    ], style={'marginLeft': '0px', 'fontSize': '16px', 'color': "#000000"})
+                ], style={'marginBottom': '8px'}) if vcsr_decoded else None,
+                
+                # VLENB
+                html.P([html.Strong('VLENB (Vector register length in bytes): '), 
+                       str(rvv_state.get('vlenb', 'N/A'))],
+                       style={'marginBottom': '8px'}),
+            ]
+            
+            rvv_section = [item for item in rvv_section if item is not None]
+            details.extend([html.Div(rvv_section)])
         
         return html.Div(details, style={'padding': '10px'})
     
@@ -218,14 +254,15 @@ def main() -> None:
         description='Interactive visualization UI for RISC-V vector instruction computation graph',
     )
     parser.add_argument(
-        '-i', '--input',
+        'input_file',
+        nargs='?',
         default='cytoscape_graph.json',
         help='Input graph JSON file (default: cytoscape_graph.json)'
     )
     
     args = parser.parse_args()
     
-    app = create_app(args.input)
+    app = create_app(args.input_file)
     app.run(debug=True)
 
 
