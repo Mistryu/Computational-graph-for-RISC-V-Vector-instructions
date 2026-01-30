@@ -1,0 +1,4 @@
+networkx==3.6.1
+dash==3.4.0
+dash-cytoscape==1.0.2
+plotly==6.5.2
