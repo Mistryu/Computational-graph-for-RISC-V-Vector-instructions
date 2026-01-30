@@ -10,7 +10,7 @@ from .style import CYTOSCAPE_STYLESHEET, LAYOUT_STYLES
 cyto.load_extra_layouts()
 
 
-def create_app(graph_file: str):
+def create_app(graph_file: str, start: int = 0, end: int = None):
     app = dash.Dash(__name__)
     
     if not Path(graph_file).exists():
@@ -19,12 +19,20 @@ def create_app(graph_file: str):
         sys.exit(1)
     
     try:
-        elements = build_elements(graph_file)
+        elements = build_elements(graph_file, start=start, end=end)
         print(f"Loading graph from: {graph_file}")
         print(f"Loaded {len(elements)} elements")
     except Exception as e:
         print(f"Error loading graph: {e}", file=sys.stderr)
         sys.exit(1)
+
+    # Check graph size and adjust settings
+    num_elements = len(elements)
+    is_large_graph = num_elements > 1000
+    
+    if is_large_graph:
+        print(f"Warning: Large graph detected ({num_elements} elements)")
+        print(f"Performance optimizations enabled")
 
     # Pretty good:
     # dagre
@@ -77,14 +85,18 @@ def create_app(graph_file: str):
                             'direction': 'RIGHT',
                             'spacing': 50,
                             'nodePlacement': 'LINEAR_SEGMENTS'
-                        }
+                        },
+                        'animate': False,
+                        'fit': True
                     },
                     stylesheet=CYTOSCAPE_STYLESHEET,
                     userPanningEnabled=True,
                     userZoomingEnabled=True,
                     boxSelectionEnabled=False,
                     minZoom=0.1,
-                    maxZoom=3.0
+                    maxZoom=3.0,
+                    wheelSensitivity=1,
+                    responsive=True,
                 )
             ], style=LAYOUT_STYLES['graph_panel']),
             
@@ -252,6 +264,14 @@ def create_app(graph_file: str):
 def main() -> None:
     parser = argparse.ArgumentParser(
         description='Interactive visualization UI for RISC-V vector instruction computation graph',
+        epilog='''
+Examples:
+  %(prog)s                              # Load first 3000 elements
+  %(prog)s -s 1000 -e 2000              # Load instructions 1000-2000
+  %(prog)s -s 3000                      # Load instructions 3000-6000
+  %(prog)s my_graph.json -s 0 -e 1000   # Load first 1000 from custom file
+        ''',
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
         'input_file',
@@ -259,10 +279,30 @@ def main() -> None:
         default='cytoscape_graph.json',
         help='Input graph JSON file (default: cytoscape_graph.json)'
     )
+    parser.add_argument(
+        '-s', '--start',
+        type=int,
+        default=0,
+        help='Starting instruction number (default: 0)'
+    )
+    parser.add_argument(
+        '-e', '--end',
+        type=int,
+        default=None,
+        help='Ending instruction number (default: None, loads up to max_elements)'
+    )
     
     args = parser.parse_args()
     
-    app = create_app(args.input_file)
+    if args.start < 0:
+        print("Error: start must be >= 0", file=sys.stderr)
+        sys.exit(1)
+    
+    if args.end is not None and args.end <= args.start:
+        print("Error: end must be greater than start", file=sys.stderr)
+        sys.exit(1)
+    
+    app = create_app(args.input_file, start=args.start, end=args.end)
     app.run(debug=True)
 
 

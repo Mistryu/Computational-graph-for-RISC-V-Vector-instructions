@@ -65,15 +65,46 @@ def load_graph_from_json(json_file: str) -> nx.DiGraph:
 #     return positions
 
 
-def build_elements(json_file: str) -> List[Dict]:
-    """Builds Cytoscape elements with labels and positions."""
+def build_elements(json_file: str, start: int = 0, end: int = None, max_elements: int = 3000) -> List[Dict]:
+    """
+    Builds Cytoscape elements with labels and positions.
+    
+    Args:
+        json_file: Path to the cytoscape graph JSON file
+        start: Starting instruction number
+        end: Ending instruction number
+        max_elements: Maximum elements to load at once (default 3000) due to performance. 
+    
+    Returns:
+        List of cytoscape elements (nodes + edges)
+    """
     
     graph = load_graph_from_json(json_file)
+    total_nodes = graph.number_of_nodes()
+    
+    if end is None:
+        end = total_nodes
+    else:
+        end = min(end, total_nodes)
+    
+    if end - start > max_elements:
+        end = start + max_elements
+        print(f"Limiting to {max_elements} elements (instructions {start}-{end})")
+    
+    # Filter nodes by instruction number range
+    filtered_nodes = []
+    for node_id, data in graph.nodes(data=True):
+        instr_number = data['instruction'].get('number', 0)
+        if start <= instr_number < end:
+            filtered_nodes.append(node_id)
+    
+    print(f"Selected {len(filtered_nodes)} nodes from range [{start}, {end})")
     
     elements = []
     
-    # Add nodes with computed labels
-    for node_id, data in graph.nodes(data=True):
+    # Add filtered nodes with computed labels
+    for node_id in filtered_nodes:
+        data = graph.nodes[node_id]
         instr = data['instruction']
         instr_number = instr.get('number', 0)
         instruction_hex = instr.get('instruction', '0x0')
@@ -90,16 +121,18 @@ def build_elements(json_file: str) -> List[Dict]:
             }
         })
     
-    # Add edges
+    # Add edges (only between filtered nodes)
+    filtered_node_set = set(filtered_nodes)
     for source, target, edge_data in graph.edges(data=True):
-        elements.append({
-            'data': {
-                'id': f"{source}-{target}",
-                'source': source,
-                'target': target,
-                'register': edge_data.get('register')
-            }
-        })
+        if source in filtered_node_set and target in filtered_node_set:
+            elements.append({
+                'data': {
+                    'id': f"{source}-{target}",
+                    'source': source,
+                    'target': target,
+                    'register': edge_data.get('register')
+                }
+            })
     
     return elements
 
