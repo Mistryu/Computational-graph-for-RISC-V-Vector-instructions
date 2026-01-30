@@ -2,8 +2,11 @@ import json
 import networkx as nx
 from typing import Dict, List, Tuple, Set
 from pathlib import Path
+<<<<<<< HEAD
 import sys
 import argparse
+=======
+>>>>>>> 4e992e5c57908539810677737138e5f977cfdf57
 
 class ComputationGraphBuilder:
     def __init__(self):
@@ -105,6 +108,7 @@ class ComputationGraphBuilder:
             json.dump(json_data, f, indent=2)
     
 def main() -> None:
+<<<<<<< HEAD
     parser = argparse.ArgumentParser(
         description='Build a graph from RISC-V vector instruction trace'
     )
@@ -148,6 +152,24 @@ def main() -> None:
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+=======
+    #json_file = "vector_trace.json"
+    #json_file = "vector_trace_simple.json"
+    json_file = "vector_trace_loop.json"
+    #json_file = "vector_trace_huge.json"
+    output_file = "cytoscape_graph.json"
+    
+    builder = ComputationGraphBuilder()
+    
+    with open(json_file, 'r') as f:
+        trace = json.load(f)
+            
+    builder.build_graph(trace)
+    builder.to_json(output_file)
+    
+    print(f"Graph has {builder.get_graph().number_of_nodes()} nodes and {builder.get_graph().number_of_edges()} edges")
+    print(f"Exported to {output_file}")
+>>>>>>> 4e992e5c57908539810677737138e5f977cfdf57
 
 if __name__ == "__main__":
     main()

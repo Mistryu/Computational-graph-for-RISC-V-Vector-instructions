@@ -31,6 +31,7 @@ def load_graph_from_json(json_file: str) -> nx.DiGraph:
 
 # Calculate positions for the nodes based on dependencies.
 # It's necessary to make the graph look more readable.
+<<<<<<< HEAD
 # def calculate_positions(graph: nx.DiGraph) -> Dict[str, Tuple[int, int]]:
 #     """
 #     Calculate horizontal and vertical positions based on dependencies.
@@ -63,6 +64,40 @@ def load_graph_from_json(json_file: str) -> nx.DiGraph:
 #         positions[node_id] = (x, y)
     
 #     return positions
+=======
+def calculate_positions(graph: nx.DiGraph) -> Dict[str, Tuple[int, int]]:
+    """
+    Calculate horizontal and vertical positions based on dependencies.
+    Instructions with no dependencies start at x=0.
+    Dependent instructions are placed to the right of their dependencies.
+    """
+    positions = {}
+    x_positions = {}
+    y_counters = {}
+    
+    sorted_nodes = list(nx.topological_sort(graph))
+    
+    # TODO: This probably will need to be improved due to late instructions being but at the start.
+    for node_id in sorted_nodes:
+        predecessors = list(graph.predecessors(node_id))
+        
+        if not predecessors:
+            x = 0
+        else:
+            max_pred_x = max(x_positions[pred] for pred in predecessors)
+            x = max_pred_x + 1
+        
+        x_positions[node_id] = x
+        
+        if x not in y_counters:
+            y_counters[x] = 0
+        y = y_counters[x]
+        y_counters[x] += 1
+        
+        positions[node_id] = (x, y)
+    
+    return positions
+>>>>>>> 4e992e5c57908539810677737138e5f977cfdf57
 
 
 def build_elements(json_file: str) -> List[Dict]:
