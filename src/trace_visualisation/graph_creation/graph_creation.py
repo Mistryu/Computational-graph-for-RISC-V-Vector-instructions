@@ -6,9 +6,11 @@ import sys
 import argparse
 
 class ComputationGraphBuilder:
-    def __init__(self):
+    def __init__(self, aggregate_loops: bool = False):
         self.graph = nx.DiGraph()
         self.register_producers = {}
+        self.aggregate_loops = aggregate_loops
+        self.pc_map = {}
         self.rvv_state = {
             'vl': None,
             'vtype': None,
@@ -47,26 +49,44 @@ class ComputationGraphBuilder:
 
     def build_graph(self, trace: List[Dict]) -> nx.DiGraph:
         for instr in trace:
-            instr_id = f"instr_{instr['number']}" # Later change to PC and identify loops 
-            
             self.update_rvv_state(instr)
             
             instr_with_state = instr.copy()
             instr_with_state['rvv_state'] = self.rvv_state.copy()
             
-            self.graph.add_node(instr_id, instruction=instr_with_state)
+            if self.aggregate_loops:
+                pc = instr.get('pc', f"unknown_{instr['number']}")
+                
+                if pc in self.pc_map:
+                    node_id = self.pc_map[pc]
+                    existing_instr = self.graph.nodes[node_id]['instruction']
+                    
+                    if 'iterations' not in existing_instr:
+                        existing_instr['iterations'] = [existing_instr.copy()]
+                        existing_instr['iteration_count'] = 1
+                    
+                    existing_instr['iterations'].append(instr_with_state)
+                    existing_instr['iteration_count'] += 1
+                    
+                    self.graph.nodes[node_id]['instruction'] = existing_instr
+                else:
+                    node_id = f"pc_{pc}"
+                    self.pc_map[pc] = node_id
+                    self.graph.add_node(node_id, instruction=instr_with_state)
+            else:
+                node_id = f"instr_{instr['number']}"
+                self.graph.add_node(node_id, instruction=instr_with_state)
             
             sources, destinations = self.extract_vector_registers(instr)
             
-            # Add edges from producer instructions
             for src_reg in sources:
                 if src_reg in self.register_producers:
                     producer_id = self.register_producers[src_reg]
-                    self.graph.add_edge(producer_id, instr_id, register=src_reg)
+                    if producer_id != node_id:
+                        self.graph.add_edge(producer_id, node_id, register=src_reg)
             
-            # Update register producers map
             for dest_reg in destinations:
-                self.register_producers[dest_reg] = instr_id
+                self.register_producers[dest_reg] = node_id
         
         return self.graph
     
@@ -99,14 +119,28 @@ class ComputationGraphBuilder:
                 }
             })
         
-        # Saving to JSON file
         json_data = {'elements': elements}
         with open(output_file, 'w') as f:
             json.dump(json_data, f, indent=2)
     
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description='Build a graph from RISC-V vector instruction trace'
+        description='Build a graph from RISC-V vector instruction trace',
+        epilog='''
+Examples:
+  %(prog)s                              # Load first 3000 elements (all types from vector_trace.json)
+  %(prog)s -s 1000 -e 2000              # Load instructions 1000-2000
+  %(prog)s -t reg ls                    # Only show register and load/store instructions
+  %(prog)s -s 0 -e 500 -t reg           # First 500 register instructions
+  %(prog)s my_graph.json -s 0 -e 1000   # Load first 1000 from custom file
+  %(prog)s trace.json --aggregate-loops # Aggregate loops by PC
+  %(prog)s trace.json -a -o loops.json  # Aggregate loops, custom output
+
+Graph modes:
+  Standard: Each instruction execution is a separate node
+  Aggregate: Instructions with same PC are merged into one node with iteration data
+        ''',
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
         'input_file',
@@ -119,6 +153,11 @@ def main() -> None:
         default='cytoscape_graph.json',
         help='Output graph JSON file (default: cytoscape_graph.json)'
     )
+    parser.add_argument(
+        '-a', '--aggregate-loops',
+        action='store_true',
+        help='Aggregate loop iterations by PC (default: False)'
+    )
     
     args = parser.parse_args()
     
@@ -129,13 +168,18 @@ def main() -> None:
         print(f"Error: Input file '{json_file}' not found", file=sys.stderr)
         sys.exit(1)
     
-    builder = ComputationGraphBuilder()
+    builder = ComputationGraphBuilder(aggregate_loops=args.aggregate_loops)
     
     try:
         with open(json_file, 'r') as f:
             trace = json.load(f)
         
         print(f"Loading trace from: {json_file}")
+        if args.aggregate_loops:
+            print("Mode: Aggregating loops by program counter")
+        else:
+            print("Mode: Standard (one node per instruction)")
+        
         builder.build_graph(trace)
         builder.to_json(output_file)
         

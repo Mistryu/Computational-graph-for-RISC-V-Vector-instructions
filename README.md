@@ -60,29 +60,6 @@ trace-ui
 
 The web interface will open at `http://127.0.0.1:8050/`
 
-## Project Structure
-
-```
-trace_visualisation/
-├── src/
-│   └── trace_visualisation/
-│       ├── graph_creation/
-│       │   ├── __init__.py
-│       │   └── graph_creation.py      # Builds dependency graphs
-│       ├── helper/
-│       │   ├── __init__.py
-│       │   ├── helper.py              # Graph processing utilities
-│       │   └── rvv_disassembler.py    # RVV instruction decoder
-│       ├── UI/
-│       │   ├── __init__.py
-│       │   ├── app.py                 # Dash web application
-│       │   └── style.py               # UI styling
-│       └── __init__.py
-├── pyproject.toml                      # Package configuration
-├── vector_trace.json                   # Input: instruction trace
-└── cytoscape_graph.json               # Output: dependency graph
-```
-
 ## Switching Graph Layouts
 
 Edit `src/trace_visualisation/UI/app.py` and replace the `layout` configuration with one of the configs I have commented out. 

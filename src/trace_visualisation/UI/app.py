@@ -121,57 +121,86 @@ def create_app(graph_file: str, start: int = 0, end: int = None, filter_types: l
         
         node = selected_nodes[0]
         instr = node.get('instruction', {})
-        instr_type = instr.get('type')
+        
+        is_loop = 'iterations' in instr
+        
+        #TODO rn I'm just showing data from first iteration of loop but add option to scroll though them
+        if is_loop:
+            iteration_count = instr.get('iteration_count', 1)
+            display_instr = instr['iterations'][0]
+        else:
+            display_instr = instr
+            iteration_count = 1
+        
+        instr_type = display_instr.get('type')
         label = node.get('label', '')
         disassembled = label.split('\n', 1)[1] if '\n' in label else 'UNKNOWN'
         
-        # Build details content
-        details = [
-            html.H3(disassembled, style={'marginTop': 0, 'fontFamily': 'monospace', 'fontSize': '16px'}),
+        details = []
+        details.append(html.H3(disassembled, style={'marginTop': 0, 'fontFamily': 'monospace', 'fontSize': '16px'}))
+
+        if is_loop:
+            details.append(
+                html.Div([
+                    html.P([
+                        html.Strong('Loop: '),
+                        f'Executed {iteration_count} times'
+                    ], style={'color': '#0066cc', 'fontWeight': 'bold'})
+                ])
+            )
+        
+        details.extend([
             html.Hr(),
-            
             html.Div([
                 html.H4('Instruction Info', style={'marginBottom': '10px'}),
-                html.P([html.Strong('Number: '), str(instr.get('number', 'N/A'))]),
-                html.P([html.Strong('PC: '), instr.get('pc', 'N/A')]),
-                html.P([html.Strong('Instruction: '), instr.get('instruction', 'N/A')]),
+                html.P([html.Strong('Number: '), str(display_instr.get('number', 'N/A'))]),
+                html.P([html.Strong('PC: '), display_instr.get('pc', 'N/A')]),
+                html.P([html.Strong('Instruction: '), display_instr.get('instruction', 'N/A')]),
             ]),
-            
             html.Hr(),
-        ]
+        ])
         
-        # Scalar Registers section (for CSR and load/store)
+        # For loops, add iteration selector note
+        if is_loop and iteration_count > 1:
+            details.append(
+                html.Div([
+                    html.P([
+                        html.Em(f'Note: Showing data from first iteration. This instruction was executed {iteration_count} times.')
+                    ], style={'fontSize': '12px', 'color': '#666', 'marginBottom': '10px'})
+                ])
+            )
+        
         scalar_section = []
         
         # For CSR instructions (type 2): show rd, rs1, rs2
         if instr_type == 2:
             scalar_section.append(html.H4('Scalar Registers', style={'marginBottom': '10px'}))
             
-            if instr.get('rd') is not None:
+            if display_instr.get('rd') is not None:
                 scalar_section.append(html.Div([
-                    html.P([html.Strong(f"x{instr.get('rd')} (rd destination):")], style={'marginBottom': '5px'}),
-                    format_hex_data(instr.get('rd_value', 'N/A'), bytes_per_group=1)
+                    html.P([html.Strong(f"x{display_instr.get('rd')} (rd destination):")], style={'marginBottom': '5px'}),
+                    format_hex_data(display_instr.get('rd_value', 'N/A'), bytes_per_group=1)
                 ], style={'marginBottom': '15px'}))
             
-            if instr.get('rs1') is not None:
+            if display_instr.get('rs1') is not None:
                 scalar_section.append(html.Div([
-                    html.P([html.Strong(f"x{instr.get('rs1')} (rs1 source 1):")], style={'marginBottom': '5px'}),
-                    format_hex_data(instr.get('rs1_value', 'N/A'), bytes_per_group=1)
+                    html.P([html.Strong(f"x{display_instr.get('rs1')} (rs1 source 1):")], style={'marginBottom': '5px'}),
+                    format_hex_data(display_instr.get('rs1_value', 'N/A'), bytes_per_group=1)
                 ], style={'marginBottom': '15px'}))
             
-            if instr.get('rs2') is not None:
+            if display_instr.get('rs2') is not None:
                 scalar_section.append(html.Div([
-                    html.P([html.Strong(f"x{instr.get('rs2')} (rs2 source 2):")], style={'marginBottom': '5px'}),
-                    format_hex_data(instr.get('rs2_value', 'N/A'), bytes_per_group=1)
+                    html.P([html.Strong(f"x{display_instr.get('rs2')} (rs2 source 2):")], style={'marginBottom': '5px'}),
+                    format_hex_data(display_instr.get('rs2_value', 'N/A'), bytes_per_group=1)
                 ], style={'marginBottom': '15px'}))
         
         # For load/store instructions (type 3): show rs1
         elif instr_type == 3:
-            if instr.get('rs1') is not None:
+            if display_instr.get('rs1') is not None:
                 scalar_section.append(html.H4('Scalar Registers', style={'marginBottom': '10px'}))
                 scalar_section.append(html.Div([
-                    html.P([html.Strong(f"x{instr.get('rs1')} (rs1 source addr):")], style={'marginBottom': '5px'}),
-                    format_hex_data(instr.get('rs1_value', 'N/A'), bytes_per_group=1)
+                    html.P([html.Strong(f"x{display_instr.get('rs1')} (rs1 source addr):")], style={'marginBottom': '5px'}),
+                    format_hex_data(display_instr.get('rs1_value', 'N/A'), bytes_per_group=1)
                 ], style={'marginBottom': '15px'}))
         
         if scalar_section:
@@ -181,33 +210,33 @@ def create_app(graph_file: str, start: int = 0, end: int = None, filter_types: l
         vec_section.append(html.H4('Vector Registers', style={'marginBottom': '10px'}))
 
         # Add VD if present
-        if 'vd' in instr and instr.get('vd') is not None:
+        if 'vd' in display_instr and display_instr.get('vd') is not None:
             vec_section.append(
                 html.Div([
-                    html.P([html.Strong(f"v{instr.get('vd')} (vd destination):")], style={'marginBottom': '5px'}),
-                        format_hex_data(instr.get('vd_data', 'N/A'))
+                    html.P([html.Strong(f"v{display_instr.get('vd')} (vd destination):")], style={'marginBottom': '5px'}),
+                        format_hex_data(display_instr.get('vd_data', 'N/A'))
                             ], style={'marginBottom': '15px'}))
         
         # Add VS1 if present
-        if 'vs1' in instr and instr.get('vs1') is not None:
+        if 'vs1' in display_instr and display_instr.get('vs1') is not None:
             vec_section.append(html.Div([
-                html.P([html.Strong(f"v{instr.get('vs1')} (vs1 source 1):")], style={'marginBottom': '5px'}),
-                        format_hex_data(instr.get('vs1_data', 'N/A'))
+                html.P([html.Strong(f"v{display_instr.get('vs1')} (vs1 source 1):")], style={'marginBottom': '5px'}),
+                        format_hex_data(display_instr.get('vs1_data', 'N/A'))
                             ], style={'marginBottom': '15px'}))
         
         # Add VS2 if present
-        if 'vs2' in instr and instr.get('vs2') is not None:
+        if 'vs2' in display_instr and display_instr.get('vs2') is not None:
             vec_section.append(
                 html.Div([
-                    html.P([html.Strong(f"v{instr.get('vs2')} (vs2 source 2):")], style={'marginBottom': '5px'}),
-                        format_hex_data(instr.get('vs2_data', 'N/A'))
+                    html.P([html.Strong(f"v{display_instr.get('vs2')} (vs2 source 2):")], style={'marginBottom': '5px'}),
+                        format_hex_data(display_instr.get('vs2_data', 'N/A'))
                             ], style={'marginBottom': '15px'}))
         
         if len(vec_section) > 1:
             details.extend(vec_section)
         
-        # Add RVV state at time of execution with decoded fields
-        rvv_state = instr.get('rvv_state', {})
+        # RVV state 
+        rvv_state = display_instr.get('rvv_state', {})
         if rvv_state and any(rvv_state.values()):
             vtype_decoded = decode_vtype(rvv_state.get('vtype'))
             vcsr_decoded = decode_vcsr(rvv_state.get('vcsr'))

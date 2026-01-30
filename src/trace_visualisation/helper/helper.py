@@ -67,24 +67,10 @@ def load_graph_from_json(json_file: str) -> nx.DiGraph:
 
 def build_elements(json_file: str, start: int = 0, end: int = 0, max_elements: int = 3000, 
                   filter_types: List[str] = []) -> List[Dict]:
-    """
-    Builds Cytoscape elements with labels and positions.
-    
-    Args:
-        json_file: Path to the cytoscape graph JSON file
-        start: Starting instruction number (inclusive)
-        end: Ending instruction number (exclusive), None for all
-        max_elements: Maximum elements to load at once (default 3000)
-        filter_types: List of instruction types to display ['reg', 'ls', 'csr'], None for all
-    
-    Returns:
-        List of cytoscape elements (nodes + edges)
-    """
-    
+   
     graph = load_graph_from_json(json_file)
     total_nodes = graph.number_of_nodes()
     
-    # Map filter types to internal type numbers
     type_map = {
         'reg': 1,
         'csr': 2,
@@ -96,18 +82,21 @@ def build_elements(json_file: str, start: int = 0, end: int = 0, max_elements: i
         allowed_types = {type_map[ft] for ft in filter_types if ft in type_map}
         print(f"Filtering instruction types: {', '.join(filter_types)}")
     
-    # Apply end cap
     if end is None:
         end = total_nodes
     else:
         end = min(end, total_nodes)
     
-    # Filter nodes by instruction number range and type
     filtered_nodes = []
     for node_id, data in graph.nodes(data=True):
         instr = data['instruction']
-        instr_num = instr.get('number', 0)
-        instr_type = instr.get('type')
+        
+        if 'iterations' in instr:
+            instr_num = instr['iterations'][0].get('number', 0)
+            instr_type = instr['iterations'][0].get('type')
+        else:
+            instr_num = instr.get('number', 0)
+            instr_type = instr.get('type')
         
         if not (start <= instr_num < end):
             continue
@@ -117,7 +106,6 @@ def build_elements(json_file: str, start: int = 0, end: int = 0, max_elements: i
         
         filtered_nodes.append(node_id)
         
-        # Stop if we hit max_elements
         if len(filtered_nodes) >= max_elements:
             break
     
@@ -125,26 +113,35 @@ def build_elements(json_file: str, start: int = 0, end: int = 0, max_elements: i
     
     elements = []
     
-    # Add filtered nodes with computed labels
     for node_id in filtered_nodes:
         data = graph.nodes[node_id]
         instr = data['instruction']
-        instr_number = instr.get('number', 0)
-        instruction_hex = instr.get('instruction', '0x0')
-        instruction_int = int(instruction_hex, 16) if isinstance(instruction_hex, str) else instruction_hex
-        disassembled = disassemble_rvv(instruction_int)
-        label = f"     {instr_number}\n{disassembled}"
+        
+        if 'iterations' in instr:
+            first_iter = instr['iterations'][0]
+            instr_number = first_iter.get('number', 0)
+            instruction_hex = first_iter.get('instruction', '0x0')
+            instruction_int = int(instruction_hex, 16) if isinstance(instruction_hex, str) else instruction_hex
+            disassembled = disassemble_rvv(instruction_int)
+            
+            iteration_count = instr.get('iteration_count', 1)
+            label = f"     {instr_number} (x{iteration_count})\n{disassembled}"
+        else:
+            instr_number = instr.get('number', 0)
+            instruction_hex = instr.get('instruction', '0x0')
+            instruction_int = int(instruction_hex, 16) if isinstance(instruction_hex, str) else instruction_hex
+            disassembled = disassemble_rvv(instruction_int)
+            label = f"     {instr_number}\n{disassembled}"
         
         elements.append({
             'data': {
                 'id': node_id,
                 'label': label,
-                'type': instr.get('type'),
+                'type': instr.get('type') if 'iterations' not in instr else instr['iterations'][0].get('type'),
                 'instruction': instr
             }
         })
     
-    # Add edges (only between filtered nodes)
     filtered_node_set = set(filtered_nodes)
     for source, target, edge_data in graph.edges(data=True):
         if source in filtered_node_set and target in filtered_node_set:
