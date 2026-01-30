@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trace-visualisation"
+version = "0.1.0"
+description = "RISC-V Vector Extension instruction trace visualization"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "dash>=3.4.0",
+    "dash-cytoscape>=1.0.2",
+    "plotly>=6.5.2",
+    "networkx>=3.6.1",
+]
+
+[project.scripts]
+graph-creation = "trace_visualisation.graph_creation.graph_creation:main"
+trace-ui = "trace_visualisation.UI.app:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "black>=22.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["trace_visualisation*"]
+
+[tool.setuptools.package-data]
+trace_visualisation = ["UI/assets/*"]
