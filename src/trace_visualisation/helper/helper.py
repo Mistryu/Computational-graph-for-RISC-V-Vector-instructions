@@ -65,15 +65,17 @@ def load_graph_from_json(json_file: str) -> nx.DiGraph:
 #     return positions
 
 
-def build_elements(json_file: str, start: int = 0, end: int = None, max_elements: int = 3000) -> List[Dict]:
+def build_elements(json_file: str, start: int = 0, end: int = 0, max_elements: int = 3000, 
+                  filter_types: List[str] = []) -> List[Dict]:
     """
     Builds Cytoscape elements with labels and positions.
     
     Args:
         json_file: Path to the cytoscape graph JSON file
-        start: Starting instruction number
-        end: Ending instruction number
-        max_elements: Maximum elements to load at once (default 3000) due to performance. 
+        start: Starting instruction number (inclusive)
+        end: Ending instruction number (exclusive), None for all
+        max_elements: Maximum elements to load at once (default 3000)
+        filter_types: List of instruction types to display ['reg', 'ls', 'csr'], None for all
     
     Returns:
         List of cytoscape elements (nodes + edges)
@@ -82,21 +84,42 @@ def build_elements(json_file: str, start: int = 0, end: int = None, max_elements
     graph = load_graph_from_json(json_file)
     total_nodes = graph.number_of_nodes()
     
+    # Map filter types to internal type numbers
+    type_map = {
+        'reg': 1,
+        'csr': 2,
+        'ls': 3
+    }
+    
+    allowed_types = None
+    if filter_types:
+        allowed_types = {type_map[ft] for ft in filter_types if ft in type_map}
+        print(f"Filtering instruction types: {', '.join(filter_types)}")
+    
+    # Apply end cap
     if end is None:
         end = total_nodes
     else:
         end = min(end, total_nodes)
     
-    if end - start > max_elements:
-        end = start + max_elements
-        print(f"Limiting to {max_elements} elements (instructions {start}-{end})")
-    
-    # Filter nodes by instruction number range
+    # Filter nodes by instruction number range and type
     filtered_nodes = []
     for node_id, data in graph.nodes(data=True):
-        instr_number = data['instruction'].get('number', 0)
-        if start <= instr_number < end:
-            filtered_nodes.append(node_id)
+        instr = data['instruction']
+        instr_num = instr.get('number', 0)
+        instr_type = instr.get('type')
+        
+        if not (start <= instr_num < end):
+            continue
+        
+        if allowed_types is not None and instr_type not in allowed_types:
+            continue
+        
+        filtered_nodes.append(node_id)
+        
+        # Stop if we hit max_elements
+        if len(filtered_nodes) >= max_elements:
+            break
     
     print(f"Selected {len(filtered_nodes)} nodes from range [{start}, {end})")
     

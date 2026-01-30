@@ -10,7 +10,7 @@ from .style import CYTOSCAPE_STYLESHEET, LAYOUT_STYLES
 cyto.load_extra_layouts()
 
 
-def create_app(graph_file: str, start: int = 0, end: int = None):
+def create_app(graph_file: str, start: int = 0, end: int = None, filter_types: list = None):
     app = dash.Dash(__name__)
     
     if not Path(graph_file).exists():
@@ -19,7 +19,7 @@ def create_app(graph_file: str, start: int = 0, end: int = None):
         sys.exit(1)
     
     try:
-        elements = build_elements(graph_file, start=start, end=end)
+        elements = build_elements(graph_file, start=start, end=end, filter_types=filter_types)
         print(f"Loading graph from: {graph_file}")
         print(f"Loaded {len(elements)} elements")
     except Exception as e:
@@ -266,10 +266,17 @@ def main() -> None:
         description='Interactive visualization UI for RISC-V vector instruction computation graph',
         epilog='''
 Examples:
-  %(prog)s                              # Load first 3000 elements
+  %(prog)s                              # Load first 3000 elements (all types)
   %(prog)s -s 1000 -e 2000              # Load instructions 1000-2000
-  %(prog)s -s 3000                      # Load instructions 3000-6000
+  %(prog)s -t reg ls                    # Only show register and load/store instructions
+  %(prog)s -t csr                       # Only show CSR instructions
+  %(prog)s -s 0 -e 500 -t reg           # First 500 register instructions
   %(prog)s my_graph.json -s 0 -e 1000   # Load first 1000 from custom file
+
+Instruction types:
+  reg : Register-register instructions (type 1)
+  csr : Vector CSR configuration instructions (type 2)
+  ls  : Load/Store instructions (type 3)
         ''',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -291,6 +298,13 @@ Examples:
         default=None,
         help='Ending instruction number (default: None, loads up to max_elements)'
     )
+    parser.add_argument(
+        '-t', '--types',
+        nargs='+',
+        choices=['reg', 'csr', 'ls'],
+        default=None,
+        help='Filter by instruction types (default: show all types)'
+    )
     
     args = parser.parse_args()
     
@@ -302,7 +316,7 @@ Examples:
         print("Error: end must be greater than start", file=sys.stderr)
         sys.exit(1)
     
-    app = create_app(args.input_file, start=args.start, end=args.end)
+    app = create_app(args.input_file, start=args.start, end=args.end, filter_types=args.types)
     app.run(debug=True)
 
 
