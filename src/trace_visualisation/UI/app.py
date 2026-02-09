@@ -1,6 +1,6 @@
 from typing import Optional
 import dash
-from dash import html, callback, Input, Output
+from dash import html, callback, Input, Output, State
 import dash_cytoscape as cyto
 from pathlib import Path
 import argparse
@@ -11,27 +11,35 @@ from .style import CYTOSCAPE_STYLESHEET, LAYOUT_STYLES
 cyto.load_extra_layouts()
 
 
-def create_app(graph_file: str, start: int = 0, end: Optional[int] = None, filter_types: Optional[list] = None):
+def create_app(graph_files: dict, start: int = 0, end: Optional[int] = None, filter_types: Optional[list] = None):
     app = dash.Dash(__name__)
     
-    if not Path(graph_file).exists():
-        print(f"Error: Graph file '{graph_file}' not found", file=sys.stderr)
-        print(f"Please run 'graph-creation' first to generate the graph.", file=sys.stderr)
+    valid_files = {name: path for name, path in graph_files.items() if Path(path).exists()}
+    
+    if not valid_files:
+        print(f"Error: No valid graph files found", file=sys.stderr)
+        print(f"Please run 'graph-creation' first to generate the graphs.", file=sys.stderr)
         sys.exit(1)
     
+    initial_graph = None
+    for preferred in ['computational', 'aggregated', 'execution']:
+        if preferred in valid_files:
+            initial_graph = preferred
+            break
+    
     try:
-        elements = build_elements(graph_file, start=start, end=end, filter_types=filter_types)
-        print(f"Loaded {len(elements)} elements")
+        initial_elements = build_elements(valid_files[initial_graph], start=start, end=end, filter_types=filter_types)
+        print(f"Loaded {len(initial_elements)} elements from {initial_graph} graph")
     except Exception as e:
         print(f"Error loading graph: {e}", file=sys.stderr)
         sys.exit(1)
 
-    num_elements = len(elements)
+    num_elements = len(initial_elements)
     is_large_graph = num_elements > 1000
     
     if is_large_graph:
         print(f"Warning: Large graph detected ({num_elements} elements)")
-        print(f"Size shrunk to {num_elements} elements, but performance may still be slow.")
+        print(f"Size shrunk to {num_elements} elements, but performance may still be slow and bugs may appear.")
 
     # Pretty good:
     # dagre
@@ -73,12 +81,25 @@ def create_app(graph_file: str, start: int = 0, end: Optional[int] = None, filte
     # },
 
     app.layout = html.Div([
+        # Graph type selector buttons
+        html.Div([
+            html.Button('Computational', id='btn-computational', n_clicks=0,
+                       style={**LAYOUT_STYLES['graph_button'], 
+                              'backgroundColor': '#0066cc' if initial_graph == 'computational' else '#ffffff'}),
+            html.Button('Aggregated', id='btn-aggregated', n_clicks=0,
+                       style={**LAYOUT_STYLES['graph_button'],
+                              'backgroundColor': '#0066cc' if initial_graph == 'aggregated' else '#ffffff'}),
+            html.Button('Execution', id='btn-execution', n_clicks=0,
+                       style={**LAYOUT_STYLES['graph_button'],
+                              'backgroundColor': '#0066cc' if initial_graph == 'execution' else '#ffffff'}),
+        ], style=LAYOUT_STYLES['button_container']),
+        
         html.Div([
             # Left side - Graph
             html.Div([
                 cyto.Cytoscape(
                     id='computation-graph',
-                    elements=elements,
+                    elements=initial_elements,
                     style=LAYOUT_STYLES['cytoscape'],
                     layout={
                         'name': 'klay',
@@ -109,7 +130,61 @@ def create_app(graph_file: str, start: int = 0, end: Optional[int] = None, filte
             ], style=LAYOUT_STYLES['details_panel'])
         ], style=LAYOUT_STYLES['flex_wrapper'])
     ], style=LAYOUT_STYLES['container'])
+ 
+    # I added dynamic object at runtime which is valid python so the errors are just a typecheck
+    app.graph_files = valid_files
+    app.filter_params = {'start': start, 'end': end, 'filter_types': filter_types}
 
+    @callback(
+        [Output('computation-graph', 'elements'),
+         Output('btn-computational', 'style'),
+         Output('btn-aggregated', 'style'),
+         Output('btn-execution', 'style')],
+        [Input('btn-computational', 'n_clicks'),
+         Input('btn-aggregated', 'n_clicks'),
+         Input('btn-execution', 'n_clicks')],
+        prevent_initial_call=True
+    )
+    def switch_graph(btn_comp, btn_agg, btn_exec):
+        ctx = dash.callback_context
+        if not ctx.triggered:
+            raise dash.exceptions.PreventUpdate
+        
+        button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+        
+        graph_map = {
+            'btn-computational': 'computational',
+            'btn-aggregated': 'aggregated',
+            'btn-execution': 'execution'
+        }
+        
+        selected_graph = graph_map.get(button_id)
+        
+        if not selected_graph or selected_graph not in app.graph_files:
+            print(f"Warning: {selected_graph} graph not available")
+            raise dash.exceptions.PreventUpdate
+        
+        try:
+            elements = build_elements(
+                app.graph_files[selected_graph],
+                start=app.filter_params['start'],
+                end=app.filter_params['end'],
+                filter_types=app.filter_params['filter_types']
+            )
+            print(f"Switched to {selected_graph} graph ({len(elements)} elements)")
+        except Exception as e:
+            print(f"Error loading {selected_graph} graph: {e}")
+            raise dash.exceptions.PreventUpdate
+        
+        base_style = LAYOUT_STYLES['graph_button']
+        active_style = {**base_style, 'backgroundColor': '#0066cc', 'color': '#ffffff'}
+        inactive_style = {**base_style, 'backgroundColor': '#ffffff', 'color': '#333333'}
+        
+        comp_style = active_style if selected_graph == 'computational' else inactive_style
+        agg_style = active_style if selected_graph == 'aggregated' else inactive_style
+        exec_style = active_style if selected_graph == 'execution' else inactive_style
+        
+        return elements, comp_style, agg_style, exec_style
 
     @callback(
         Output('details-panel', 'children'),
@@ -251,33 +326,51 @@ def create_app(graph_file: str, start: int = 0, end: Optional[int] = None, filte
             details.extend([html.Div(rvv_section)])
         
         return html.Div(details, style={'padding': '10px'})
+    
     return app
 
 
-def main() -> None:
+def main():
     parser = argparse.ArgumentParser(
         description='Interactive visualization UI for RISC-V vector instruction computation graph',
         epilog='''
-            Examples:
-            %(prog)s                              # Load first 3000 elements
-            %(prog)s -s 1000 -e 2000              # Load instructions 1000-2000
-            %(prog)s -t reg ls                    # Only show register and load/store instructions
-            %(prog)s -t csr                       # Only show CSR instructions
-            %(prog)s -s 0 -e 500 -t reg           # First 500 register instructions
-            %(prog)s my_graph.json -s 0 -e 1000   # Load first 1000 from custom file
+Examples:
+  %(prog)s                              # Load graphs with default settings
+  %(prog)s -s 1000 -e 2000              # Load instructions 1000-2000
+  %(prog)s -t reg ls                    # Only show register and load/store instructions
+  %(prog)s -t csr                       # Only show CSR instructions
+  %(prog)s -s 0 -e 500 -t reg           # First 500 register instructions
+  %(prog)s -i1 my_comp.json             # Use custom computational graph file
 
-            Instruction types:
-            reg : Register-register instructions (type 1)
-            csr : Vector CSR configuration instructions (type 2)
-            ls  : Load/Store instructions (type 3)
-                    ''',
+Default graph files:
+  computational_graph.json
+  aggregated_computational_graph.json
+  execution_graph.json
+
+Instruction types:
+  reg : Register-register instructions (type 1)
+  csr : Vector CSR configuration instructions (type 2)
+  ls  : Load/Store instructions (type 3)
+        ''',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
-        'input_file',
-        nargs='?',
-        default='cytoscape_graph.json',
-        help='Input graph JSON file (default: cytoscape_graph.json)'
+        '-i1', '--input-1',
+        type=str,
+        default='computational_graph.json',
+        help='Computational graph JSON file (default: computational_graph.json)'
+    )
+    parser.add_argument(
+        '-i2', '--input-2',
+        type=str,
+        default='aggregated_computational_graph.json',
+        help='Aggregated computational graph JSON file (default: aggregated_computational_graph.json)'
+    )
+    parser.add_argument(
+        '-i3', '--input-3',
+        type=str,
+        default='execution_graph.json',
+        help='Execution graph JSON file (default: execution_graph.json)'
     )
     parser.add_argument(
         '-s', '--start',
@@ -309,9 +402,23 @@ def main() -> None:
         print("Error: end must be greater than start", file=sys.stderr)
         sys.exit(1)
     
-    app = create_app(args.input_file, start=args.start, end=args.end, filter_types=args.types)
+    graph_files = {
+        'computational': args.input_1,
+        'aggregated': args.input_2,
+        'execution': args.input_3
+    }
+    
+    existing_files = [name for name, path in graph_files.items() if Path(path).exists()]
+    if not existing_files:
+        print("Error: No valid graph files found", file=sys.stderr)
+        sys.exit(1)
+    
+    print("Found graph files:")
+    for name in existing_files:
+        print(f"  {name}: {graph_files[name]}")
+    
+    app = create_app(graph_files, start=args.start, end=args.end, filter_types=args.types)
     app.run(debug=True)
-
 
 if __name__ == '__main__':
     main()

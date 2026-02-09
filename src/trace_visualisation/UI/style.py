@@ -62,7 +62,31 @@ LAYOUT_STYLES = {
     'container': {
         'margin': 0,
         'padding': 0,
-        'fontFamily': 'Arial, sans-serif'
+        'fontFamily': 'Arial, sans-serif',
+        'position': 'relative'
+    },
+    'button_container': {
+        'position': 'absolute',
+        'top': '10px',
+        'left': '10px',
+        'zIndex': 1000,
+        'display': 'flex',
+        'gap': '5px',
+        'padding': '5px',
+        'backgroundColor': 'rgba(255, 255, 255, 0.9)',
+        'borderRadius': '5px',
+        'boxShadow': '0 2px 5px rgba(0,0,0,0.2)'
+    },
+    'graph_button': {
+        'padding': '8px 16px',
+        'border': '1px solid #ddd',
+        'borderRadius': '4px',
+        'cursor': 'pointer',
+        'fontSize': '14px',
+        'fontWeight': '500',
+        'transition': 'all 0.3s ease',
+        'backgroundColor': '#ffffff',
+        'color': '#333333'
     },
     'flex_wrapper': {
         'display': 'flex',
