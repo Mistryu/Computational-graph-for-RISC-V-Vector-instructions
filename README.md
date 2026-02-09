@@ -2,57 +2,73 @@
 
 A visualization tool for RISC-V Vector Extension instruction traces, building dependency graphs and providing an interactive UI for analysis.
 
-## Installation
+## Installation Steps
 
-### 1. Clone the Repository
+### 1. Navigate to the project directory
 
 ```bash
-cd /home/mistryu/Documents/TUM/Thesis/code
-git clone <repository-url> trace_visualisation
 cd trace_visualisation
 ```
 
-### 2. Create Python Virtual Environment
-
-```bash
-python3 -m venv venv
-
-# Activate virtual environment
-# On Linux/Mac:
-source venv/bin/activate
-# On Windows:
-# venv\Scripts\activate
-```
-
-### 3. Install the Package
+### 2. Install the package
 
 ```bash
 pip install -e .
 ```
 
-This will install:
-- dash (>=3.4.0)
-- dash-cytoscape (>=1.0.2)
-- plotly (>=6.5.2)
-- networkx (>=3.6.1)
+### 3. Verify installation
 
-## Usage
+Check that the commands are available:
 
-### Step 1: Generate Computation Graph
+```bash
+tracer --help
+
+graph-creation --help
+
+trace-ui --help
+```
+
+### Running
+
+Command to create graphs from the vector trace and run the ui:
+
+```bash
+tracer
+```
+
+If your graph is named vector_trace.json otherwise specify the name:
+
+```bash
+tracer my_trace.jon
+```
+
+### How to use individual modules
 
 First, generate the computation graph from your vector instruction trace:
 
+If your trace file has the name vector_trace.json
+
 ```bash
-# Make sure you have a vector_trace.json file in the root directory I'm gonna fix it soon
 graph-creation
 ```
 
+Otherwise you must specify the name:
+
+```bash
+graph-creation your_trace.json
+```
+
 This will:
-- Read `vector_trace.json` (or the file specified in `graph_creation.py`)
+
+- Read the vector trace file
+
 - Build the dependency graph
-- Export to `cytoscape_graph.json`
+
+- By default export to 3 graphs ( computational_graph.json, aggregated_computational_graph.json and execution_graph.json)
 
 ### Step 2: Launch Visualization UI
+
+Launch the UI which will detect the graphs created previously.
 
 ```bash
 trace-ui
@@ -60,6 +76,4 @@ trace-ui
 
 The web interface will open at `http://127.0.0.1:8050/`
 
-## Switching Graph Layouts
 
-Edit `src/trace_visualisation/UI/app.py` and replace the `layout` configuration with one of the configs I have commented out. 

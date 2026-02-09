@@ -16,7 +16,8 @@ dependencies = [
 ]
 
 [project.scripts]
-graph-creation = "trace_visualisation.graph_creation.graph_creation:main"
+tracer = "trace_visualisation.tracer:main"
+graph-creation = "trace_visualisation.graph.graph_creation:main"
 trace-ui = "trace_visualisation.UI.app:main"
 
 [project.optional-dependencies]

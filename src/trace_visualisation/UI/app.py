@@ -1,6 +1,6 @@
 from typing import Optional
 import dash
-from dash import html, callback, Input, Output, State
+from dash import html, callback, Input, Output
 import dash_cytoscape as cyto
 from pathlib import Path
 import argparse
@@ -30,6 +30,7 @@ def create_app(graph_files: dict, start: int = 0, end: Optional[int] = None, fil
     try:
         initial_elements = build_elements(valid_files[initial_graph], start=start, end=end, filter_types=filter_types)
         print(f"Loaded {len(initial_elements)} elements from {initial_graph} graph")
+        print()
     except Exception as e:
         print(f"Error loading graph: {e}", file=sys.stderr)
         sys.exit(1)
@@ -416,6 +417,7 @@ Instruction types:
     print("Found graph files:")
     for name in existing_files:
         print(f"  {name}: {graph_files[name]}")
+    print()
     
     app = create_app(graph_files, start=args.start, end=args.end, filter_types=args.types)
     app.run(debug=True)

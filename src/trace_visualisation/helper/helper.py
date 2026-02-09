@@ -82,8 +82,6 @@ def build_elements(json_file: str, start: int = 0, end: Optional[int] = None,
                 }
             })
     
-    print(f"Added {edge_count} edges between filtered nodes")
-    
     return elements
 
 
