@@ -28,7 +28,7 @@ graph-creation --help
 trace-ui --help
 ```
 
-### Running
+## Execution
 
 Command to create graphs from the vector trace and run the ui:
 
@@ -41,6 +41,8 @@ If your graph is named vector_trace.json otherwise specify the name:
 ```bash
 tracer my_trace.jon
 ```
+
+The web interface will open at `http://127.0.0.1:8050/`
 
 ### How to use individual modules
 
@@ -66,7 +68,7 @@ This will:
 
 - By default export to 3 graphs ( computational_graph.json, aggregated_computational_graph.json and execution_graph.json)
 
-### Step 2: Launch Visualization UI
+### Launch Visualization UI
 
 Launch the UI which will detect the graphs created previously.
 
@@ -75,5 +77,3 @@ trace-ui
 ```
 
 The web interface will open at `http://127.0.0.1:8050/`
-
-
