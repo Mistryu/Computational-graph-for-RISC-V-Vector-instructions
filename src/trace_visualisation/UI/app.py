@@ -1,16 +1,17 @@
+from typing import Optional
 import dash
 from dash import html, callback, Input, Output
 import dash_cytoscape as cyto
 from pathlib import Path
 import argparse
 import sys
-from trace_visualisation.helper import build_elements, format_hex_data, decode_vtype, decode_vcsr
+from trace_visualisation.helper import build_elements, decode_vtype, decode_vcsr, format_register_data
 from .style import CYTOSCAPE_STYLESHEET, LAYOUT_STYLES
 
 cyto.load_extra_layouts()
 
 
-def create_app(graph_file: str, start: int = 0, end: int = None, filter_types: list = None):
+def create_app(graph_file: str, start: int = 0, end: Optional[int] = None, filter_types: Optional[list] = None):
     app = dash.Dash(__name__)
     
     if not Path(graph_file).exists():
@@ -20,19 +21,17 @@ def create_app(graph_file: str, start: int = 0, end: int = None, filter_types: l
     
     try:
         elements = build_elements(graph_file, start=start, end=end, filter_types=filter_types)
-        print(f"Loading graph from: {graph_file}")
         print(f"Loaded {len(elements)} elements")
     except Exception as e:
         print(f"Error loading graph: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Check graph size and adjust settings
     num_elements = len(elements)
     is_large_graph = num_elements > 1000
     
     if is_large_graph:
         print(f"Warning: Large graph detected ({num_elements} elements)")
-        print(f"Performance optimizations enabled")
+        print(f"Size shrunk to {num_elements} elements, but performance may still be slow.")
 
     # Pretty good:
     # dagre
@@ -46,14 +45,16 @@ def create_app(graph_file: str, start: int = 0, end: int = None, filter_types: l
 
     # Just past one of those in the layout field to check how it works
     # KLAY:
-    # {
-    #     'name': 'klay',
-    #     'klay': {
-    #         'direction': 'RIGHT',
-    #         'spacing': 50,
-    #         'nodePlacement': 'LINEAR_SEGMENTS'
-    #     }
-    # }
+                    # layout={
+                    #     'name': 'klay',
+                    #     'klay': {
+                    #         'direction': 'RIGHT',
+                    #         'spacing': 50,
+                    #         'nodePlacement': 'LINEAR_SEGMENTS'
+                    #     },
+                    #     'animate': False,
+                    #     'fit': True
+                    # },
     #
     # DAGRE:
     # {
@@ -61,7 +62,7 @@ def create_app(graph_file: str, start: int = 0, end: int = None, filter_types: l
     #     'rankDir': 'LR',
     #     'nodeSep': 100,
     #     'rankSep': 150
-    # }
+    # },
     #
     # BREADTHFIRST:
     # {
@@ -69,7 +70,7 @@ def create_app(graph_file: str, start: int = 0, end: int = None, filter_types: l
     #     'directed': True,
     #     'spacingFactor': 1.5,
     #     'avoidOverlap': True
-    # }
+    # },
 
     app.layout = html.Div([
         html.Div([
@@ -84,7 +85,9 @@ def create_app(graph_file: str, start: int = 0, end: int = None, filter_types: l
                         'klay': {
                             'direction': 'RIGHT',
                             'spacing': 50,
-                            'nodePlacement': 'LINEAR_SEGMENTS'
+                            'nodePlacement': 'LINEAR_SEGMENTS',
+                            'thoroughness': 10,
+                            'direction': 'RIGHT',
                         },
                         'animate': False,
                         'fit': True
@@ -112,7 +115,6 @@ def create_app(graph_file: str, start: int = 0, end: int = None, filter_types: l
         Output('details-panel', 'children'),
         Input('computation-graph', 'selectedNodeData')
     )
-    
     def update_details_panel(selected_nodes):
         if not selected_nodes:
             return html.Div([
@@ -133,11 +135,10 @@ def create_app(graph_file: str, start: int = 0, end: int = None, filter_types: l
             iteration_count = 1
         
         instr_type = display_instr.get('type')
-        label = node.get('label', '')
-        disassembled = label.split('\n', 1)[1] if '\n' in label else 'UNKNOWN'
-        
+        instruction = node.get('label', display_instr.get('instruction', 'N/A')).splitlines()[1].strip() 
+
         details = []
-        details.append(html.H3(disassembled, style={'marginTop': 0, 'fontFamily': 'monospace', 'fontSize': '16px'}))
+        details.append(html.H3(instruction, style={'marginTop': 0, 'fontFamily': 'monospace', 'fontSize': '16px'}))
 
         if is_loop:
             details.append(
@@ -160,48 +161,26 @@ def create_app(graph_file: str, start: int = 0, end: int = None, filter_types: l
             html.Hr(),
         ])
         
-        # For loops, add iteration selector note
-        if is_loop and iteration_count > 1:
-            details.append(
-                html.Div([
-                    html.P([
-                        html.Em(f'Note: Showing data from first iteration. This instruction was executed {iteration_count} times.')
-                    ], style={'fontSize': '12px', 'color': '#666', 'marginBottom': '10px'})
-                ])
-            )
-        
         scalar_section = []
         
-        # For CSR instructions (type 2): show rd, rs1, rs2
+        # For CSR instructions (type 2)
         if instr_type == 2:
             scalar_section.append(html.H4('Scalar Registers', style={'marginBottom': '10px'}))
             
             if display_instr.get('rd') is not None:
-                scalar_section.append(html.Div([
-                    html.P([html.Strong(f"x{display_instr.get('rd')} (rd destination):")], style={'marginBottom': '5px'}),
-                    format_hex_data(display_instr.get('rd_value', 'N/A'), bytes_per_group=1)
-                ], style={'marginBottom': '15px'}))
+                scalar_section.append(format_register_data(f"x{display_instr.get('rd')}", 'rd destination', display_instr.get('rd_value', 'N/A')))
             
             if display_instr.get('rs1') is not None:
-                scalar_section.append(html.Div([
-                    html.P([html.Strong(f"x{display_instr.get('rs1')} (rs1 source 1):")], style={'marginBottom': '5px'}),
-                    format_hex_data(display_instr.get('rs1_value', 'N/A'), bytes_per_group=1)
-                ], style={'marginBottom': '15px'}))
+                scalar_section.append(format_register_data(f"x{display_instr.get('rs1')}", 'rs1 source', display_instr.get('rs1_value', 'N/A')))
             
             if display_instr.get('rs2') is not None:
-                scalar_section.append(html.Div([
-                    html.P([html.Strong(f"x{display_instr.get('rs2')} (rs2 source 2):")], style={'marginBottom': '5px'}),
-                    format_hex_data(display_instr.get('rs2_value', 'N/A'), bytes_per_group=1)
-                ], style={'marginBottom': '15px'}))
+                scalar_section.append(format_register_data(f"x{display_instr.get('rs2')}", 'rs2 source', display_instr.get('rs2_value', 'N/A')))
         
-        # For load/store instructions (type 3): show rs1
+        # For load/store instructions (type 3)
         elif instr_type == 3:
             if display_instr.get('rs1') is not None:
                 scalar_section.append(html.H4('Scalar Registers', style={'marginBottom': '10px'}))
-                scalar_section.append(html.Div([
-                    html.P([html.Strong(f"x{display_instr.get('rs1')} (rs1 source addr):")], style={'marginBottom': '5px'}),
-                    format_hex_data(display_instr.get('rs1_value', 'N/A'), bytes_per_group=1)
-                ], style={'marginBottom': '15px'}))
+                scalar_section.append(format_register_data(f"x{display_instr.get('rs1')}", 'rs1 source addr', display_instr.get('rs1_value', 'N/A')))
         
         if scalar_section:
             details.extend(scalar_section)
@@ -209,35 +188,21 @@ def create_app(graph_file: str, start: int = 0, end: int = None, filter_types: l
         vec_section = []
         vec_section.append(html.H4('Vector Registers', style={'marginBottom': '10px'}))
 
-        # Add VD if present
         if 'vd' in display_instr and display_instr.get('vd') is not None:
-            vec_section.append(
-                html.Div([
-                    html.P([html.Strong(f"v{display_instr.get('vd')} (vd destination):")], style={'marginBottom': '5px'}),
-                        format_hex_data(display_instr.get('vd_data', 'N/A'))
-                            ], style={'marginBottom': '15px'}))
+            vec_section.append(format_register_data(f"v{display_instr.get('vd')}", 'vd destination', display_instr.get('vd_data', 'N/A')))
         
-        # Add VS1 if present
         if 'vs1' in display_instr and display_instr.get('vs1') is not None:
-            vec_section.append(html.Div([
-                html.P([html.Strong(f"v{display_instr.get('vs1')} (vs1 source 1):")], style={'marginBottom': '5px'}),
-                        format_hex_data(display_instr.get('vs1_data', 'N/A'))
-                            ], style={'marginBottom': '15px'}))
-        
-        # Add VS2 if present
+            vec_section.append(format_register_data(f"v{display_instr.get('vs1')}", 'vs1 source 1', display_instr.get('vs1_data', 'N/A')))
+
         if 'vs2' in display_instr and display_instr.get('vs2') is not None:
-            vec_section.append(
-                html.Div([
-                    html.P([html.Strong(f"v{display_instr.get('vs2')} (vs2 source 2):")], style={'marginBottom': '5px'}),
-                        format_hex_data(display_instr.get('vs2_data', 'N/A'))
-                            ], style={'marginBottom': '15px'}))
+            vec_section.append(format_register_data(f"v{display_instr.get('vs2')}", 'vs2 source 2', display_instr.get('vs2_data', 'N/A')))  
         
         if len(vec_section) > 1:
             details.extend(vec_section)
         
         # RVV state 
         rvv_state = display_instr.get('rvv_state', {})
-        if rvv_state and any(rvv_state.values()):
+        if rvv_state:
             vtype_decoded = decode_vtype(rvv_state.get('vtype'))
             vcsr_decoded = decode_vcsr(rvv_state.get('vcsr'))
             
@@ -273,7 +238,7 @@ def create_app(graph_file: str, start: int = 0, end: int = None, filter_types: l
                     html.Ul([
                         html.Li(f"vxsat (fixed-point saturation): {vcsr_decoded.get('vxsat', 'N/A')}"),
                         html.Li(f"vxrm (rounding mode): {vcsr_decoded.get('vxrm', 'N/A')}")
-                    ], style={'marginLeft': '0px', 'fontSize': '16px', 'color': "#000000"})
+                    ], style={'marginLeft': '0px', 'fontSize': '16px', 'color': "#030303"})
                 ], style={'marginBottom': '8px'}) if vcsr_decoded else None,
                 
                 # VLENB
@@ -286,7 +251,6 @@ def create_app(graph_file: str, start: int = 0, end: int = None, filter_types: l
             details.extend([html.Div(rvv_section)])
         
         return html.Div(details, style={'padding': '10px'})
-    
     return app
 
 
@@ -294,19 +258,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description='Interactive visualization UI for RISC-V vector instruction computation graph',
         epilog='''
-Examples:
-  %(prog)s                              # Load first 3000 elements (all types)
-  %(prog)s -s 1000 -e 2000              # Load instructions 1000-2000
-  %(prog)s -t reg ls                    # Only show register and load/store instructions
-  %(prog)s -t csr                       # Only show CSR instructions
-  %(prog)s -s 0 -e 500 -t reg           # First 500 register instructions
-  %(prog)s my_graph.json -s 0 -e 1000   # Load first 1000 from custom file
+            Examples:
+            %(prog)s                              # Load first 3000 elements
+            %(prog)s -s 1000 -e 2000              # Load instructions 1000-2000
+            %(prog)s -t reg ls                    # Only show register and load/store instructions
+            %(prog)s -t csr                       # Only show CSR instructions
+            %(prog)s -s 0 -e 500 -t reg           # First 500 register instructions
+            %(prog)s my_graph.json -s 0 -e 1000   # Load first 1000 from custom file
 
-Instruction types:
-  reg : Register-register instructions (type 1)
-  csr : Vector CSR configuration instructions (type 2)
-  ls  : Load/Store instructions (type 3)
-        ''',
+            Instruction types:
+            reg : Register-register instructions (type 1)
+            csr : Vector CSR configuration instructions (type 2)
+            ls  : Load/Store instructions (type 3)
+                    ''',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
@@ -325,7 +289,7 @@ Instruction types:
         '-e', '--end',
         type=int,
         default=None,
-        help='Ending instruction number (default: None, loads up to max_elements)'
+        help='Ending instruction number (default: None, loads all up to max_elements)'
     )
     parser.add_argument(
         '-t', '--types',

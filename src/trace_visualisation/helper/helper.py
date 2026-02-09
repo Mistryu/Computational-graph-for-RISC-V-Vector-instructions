@@ -1,14 +1,11 @@
 import json
 import networkx as nx
-from typing import Dict, List
+from typing import Dict, List, Optional
 from .rvv_disassembler import disassemble_rvv
 from dash import html
 
-# Here I'm essentially recreating the graph from the JSON file. 
-# In theory we could combine graph creation and element building to avoid this step,
-# but this keeps things modular and easier to manage.
-def load_graph_from_json(json_file: str) -> nx.DiGraph:
 
+def load_graph_from_json(json_file: str) -> nx.DiGraph:
     with open(json_file, 'r') as f:
         data = json.load(f)
     
@@ -16,135 +13,66 @@ def load_graph_from_json(json_file: str) -> nx.DiGraph:
     for element in data['elements']:
         element_data = element.get('data', {})
         
-        if 'source' in element_data:  # Edge
-            source = element_data['source']
-            target = element_data['target']
-            register = element_data.get('register')
-            graph.add_edge(source, target, register=register)
-            
-        else:  # Node
-            node_id = element_data['id']
-            instr = element_data['instruction']
-            graph.add_node(node_id, instruction=instr)
+        if 'source' in element_data:
+            graph.add_edge(
+                element_data['source'],
+                element_data['target'],
+                register=element_data.get('register')
+            )
+        else:
+            graph.add_node(
+                element_data['id'],
+                instruction=element_data['instruction']
+            )
     
     return graph
 
-# Calculate positions for the nodes based on dependencies.
-# It's necessary to make the graph look more readable.
-# def calculate_positions(graph: nx.DiGraph) -> Dict[str, Tuple[int, int]]:
-#     """
-#     Calculate horizontal and vertical positions based on dependencies.
-#     Instructions with no dependencies start at x=0.
-#     Dependent instructions are placed to the right of their dependencies.
-#     """
-#     positions = {}
-#     x_positions = {}
-#     y_counters = {}
-    
-#     sorted_nodes = list(nx.topological_sort(graph))
-    
-#     # TODO: This probably will need to be improved due to late instructions being but at the start.
-#     for node_id in sorted_nodes:
-#         predecessors = list(graph.predecessors(node_id))
-        
-#         if not predecessors:
-#             x = 0
-#         else:
-#             max_pred_x = max(x_positions[pred] for pred in predecessors)
-#             x = max_pred_x + 1
-        
-#         x_positions[node_id] = x
-        
-#         if x not in y_counters:
-#             y_counters[x] = 0
-#         y = y_counters[x]
-#         y_counters[x] += 1
-        
-#         positions[node_id] = (x, y)
-    
-#     return positions
 
-
-def build_elements(json_file: str, start: int = 0, end: int = 0, max_elements: int = 3000, 
-                  filter_types: List[str] = []) -> List[Dict]:
-   
+def build_elements(json_file: str, start: int = 0, end: Optional[int] = None, 
+                  max_elements: int = 3000, filter_types: Optional[List[str]] = None) -> List[Dict]:
+    
     graph = load_graph_from_json(json_file)
-    total_nodes = graph.number_of_nodes()
     
-    type_map = {
-        'reg': 1,
-        'csr': 2,
-        'ls': 3
-    }
-    
-    allowed_types = None
-    if filter_types:
-        allowed_types = {type_map[ft] for ft in filter_types if ft in type_map}
-        print(f"Filtering instruction types: {', '.join(filter_types)}")
-    
-    if end is None:
-        end = total_nodes
-    else:
-        end = min(end, total_nodes)
+    type_map = {'reg': 1, 'csr': 2, 'ls': 3}
+    allowed_types = {type_map[ft] for ft in filter_types if ft in type_map} if filter_types else None
     
     filtered_nodes = []
     for node_id, data in graph.nodes(data=True):
-        instr = data['instruction']
-        
-        if 'iterations' in instr:
-            instr_num = instr['iterations'][0].get('number', 0)
-            instr_type = instr['iterations'][0].get('type')
-        else:
-            instr_num = instr.get('number', 0)
-            instr_type = instr.get('type')
-        
-        if not (start <= instr_num < end):
-            continue
-        
-        if allowed_types is not None and instr_type not in allowed_types:
-            continue
-        
-        filtered_nodes.append(node_id)
-        
-        if len(filtered_nodes) >= max_elements:
-            break
+        if should_include_node(data['instruction'], start, end, allowed_types):
+            filtered_nodes.append(node_id)
+            if len(filtered_nodes) >= max_elements:
+                break
     
-    print(f"Selected {len(filtered_nodes)} nodes from range [{start}, {end})")
+    print(f"Selected {len(filtered_nodes)} nodes from total {graph.number_of_nodes()}")
+    print(f"Graph has {graph.number_of_edges()} total edges")
     
     elements = []
     
     for node_id in filtered_nodes:
-        data = graph.nodes[node_id]
-        instr = data['instruction']
+        instr = graph.nodes[node_id]['instruction']
         
-        if 'iterations' in instr:
-            first_iter = instr['iterations'][0]
-            instr_number = first_iter.get('number', 0)
-            instruction_hex = first_iter.get('instruction', '0x0')
-            instruction_int = int(instruction_hex, 16) if isinstance(instruction_hex, str) else instruction_hex
-            disassembled = disassemble_rvv(instruction_int)
-            
-            iteration_count = instr.get('iteration_count', 1)
-            label = f"     {instr_number} (x{iteration_count})\n{disassembled}"
-        else:
-            instr_number = instr.get('number', 0)
-            instruction_hex = instr.get('instruction', '0x0')
-            instruction_int = int(instruction_hex, 16) if isinstance(instruction_hex, str) else instruction_hex
-            disassembled = disassemble_rvv(instruction_int)
-            label = f"     {instr_number}\n{disassembled}"
+        display_instr = instr['iterations'][0] if 'iterations' in instr else instr
+        
+        instr_number = display_instr.get('number', 0)
+        instruction_hex = display_instr.get('instruction', '0x0')
+        disassembled = disassemble_rvv(int(instruction_hex, 16))
+        
+        label = f"{instr_number}\n{disassembled}"
         
         elements.append({
             'data': {
                 'id': node_id,
                 'label': label,
-                'type': instr.get('type') if 'iterations' not in instr else instr['iterations'][0].get('type'),
+                'type': display_instr.get('type'),
                 'instruction': instr
             }
         })
     
     filtered_node_set = set(filtered_nodes)
+    edge_count = 0
     for source, target, edge_data in graph.edges(data=True):
         if source in filtered_node_set and target in filtered_node_set:
+            edge_count += 1
             elements.append({
                 'data': {
                     'id': f"{source}-{target}",
@@ -154,14 +82,30 @@ def build_elements(json_file: str, start: int = 0, end: int = 0, max_elements: i
                 }
             })
     
+    print(f"Added {edge_count} edges between filtered nodes")
+    
     return elements
 
 
-def format_hex_data(data: str, bytes_per_group: int = 2) -> html.Div:
-    """Format hex data with spacing every N bytes."""
-    if not data or data == 'N/A':
-        return html.Span('N/A', style={'color': '#999999'})
+def should_include_node(instr: Dict, start: int, end: Optional[int], 
+                       allowed_types: Optional[set]) -> bool:
+    executions = instr.get('iterations', [instr])
     
+    for exec_instr in executions:
+        exec_num = exec_instr.get('number', 0)
+        exec_type = exec_instr.get('type')
+        
+        if end is not None and not (start <= exec_num < end):
+            continue
+        
+        if allowed_types is not None and exec_type not in allowed_types:
+            continue
+        
+        return True
+    return False
+
+
+def format_hex_data(data: str, bytes_per_group: int = 2):
     groups = []
     for i in range(0, len(data), bytes_per_group * 2):
         groups.append(data[i:i + bytes_per_group * 2])
@@ -182,49 +126,59 @@ def format_hex_data(data: str, bytes_per_group: int = 2) -> html.Div:
             'lineHeight': '1.6'
         }
     )
+    
+
+def format_register_data(register: str, reg_type: str, reg_value):
+    return html.Div([
+                    html.P([html.Strong(f"{register} ({reg_type}):")], style={'marginBottom': '5px'}),
+                    format_hex_data(reg_value, bytes_per_group= 2 if 'v' in register else 1)
+                ], style={'marginBottom': '15px'})
 
 
-def decode_vtype(vtype) -> dict:
+def decode_vtype(vtype) -> Dict[str, str]:
     if vtype is None or vtype == 'N/A':
         return {}
     
     try:
-        vtype_int = int(vtype, 16) if isinstance(vtype, str) else int(vtype)
+        vtype_int = int(vtype, 16)
     except (ValueError, TypeError):
         return {}
     
-    vill = (vtype_int >> 7) & 0x1
-    vma = (vtype_int >> 7) & 0x1
-    vta = (vtype_int >> 6) & 0x1
+    vlmul_raw = vtype_int & 0x7
     vsew = (vtype_int >> 3) & 0x7
-    vlmul = vtype_int & 0x7
+    vta = (vtype_int >> 6) & 0x1
+    vma = (vtype_int >> 7) & 0x1
     
-    sew_map = {0: "8-bit", 1: "16-bit", 2: "32-bit", 3: "64-bit"}
-    lmul_map = {0: "1", 1: "2", 2: "4", 3: "8", 5: "1/2", 6: "1/4", 7: "1/8"}
+    sew_map = {0: "e8", 1: "e16", 2: "e32", 3: "e64"}
+    lmul_map = {0: "1", 1: "2", 2: "4", 3: "8", 5: "1/8", 6: "1/4", 7: "1/2"}
     
     return {
-        'vill': 'illegal' if vill else 'legal',
+        'vill': 'legal' if vtype.startswith('0x0') else 'illegal',
         'vma': 'agnostic' if vma else 'undisturbed',
         'vta': 'agnostic' if vta else 'undisturbed',
         'vsew': sew_map.get(vsew, f"reserved({vsew})"),
-        'vlmul': f"{lmul_map.get(vlmul, f'reserved({vlmul})')}"
+        'vlmul': lmul_map.get(vlmul_raw, f'reserved({vlmul_raw})')
     }
 
 
-def decode_vcsr(vcsr) -> dict:
+def decode_vcsr(vcsr) -> Dict[str, str]:
     if vcsr is None or vcsr == 'N/A':
         return {}
     
     try:
-        vcsr_int = int(vcsr, 16) if isinstance(vcsr, str) else int(vcsr)
+        vcsr_int = int(vcsr, 16)
     except (ValueError, TypeError):
         return {}
     
-    vxsat = (vcsr_int >> 0) & 0x1
+    vxsat = vcsr_int & 0x1
     vxrm = (vcsr_int >> 1) & 0x3
     
-    vxrm_map = {0: "rnu (round-to-nearest-up)", 1: "rne (round-to-nearest-even)", 
-                2: "rdn (round-down)", 3: "rod (round-to-odd)"}
+    vxrm_map = {
+        0: "rnu (round-to-nearest-up)",
+        1: "rne (round-to-nearest-even)",
+        2: "rdn (round-down)",
+        3: "rod (round-to-odd)"
+    }
     
     return {
         'vxsat': 'saturated' if vxsat else 'no saturation',

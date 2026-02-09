@@ -6,45 +6,6 @@ instructions into human-readable format.
 
 Be warned, this is a work in progress and may not be 100% accurate.
 
-CONFLICTING INSTRUCTIONS (same funct6, resolved by category/priority):
-
-1. REDUCTION vs ARITHMETIC (funct6=0b000000, 0b000010, 0b000011, 0b000100, 0b000101, 0b000110, 0b000111):
-    (funct6)  (reduction) (arithmetic)
-   - 0b000000: vredsum vs vadd
-   - 0b000010: vredor vs vsub
-   - 0b000011: vredxor vs vrsub
-   - 0b000100: vredminu vs vminu
-   - 0b000101: vredmin vs vmin
-   - 0b000110: vredmaxu vs vmaxu
-   - 0b000111: vredmax vs vmax
-   Resolution: Arithmetic checked first, reduction as fallback
-
-2. SHIFT vs COMPARE (funct6=0b011000, 0b011001):
-   (funct6)  (shift) (compare)
-   - 0b011000: vsrl vs vmseq
-   - 0b011001: vsra vs vmsne
-   Resolution: Shift checked first, compare as fallback
-
-3. MULTIPLY vs ARITHMETIC (funct6=0b100000, 0b100001, 0b100010, 0b100011, 0b100100, 0b100101, 0b100110, 0b100111):
-   (funct6)  (multiply) (arithmetic)
-   - 0b100000: vmul vs vsaddu
-   - 0b100001: vmulh vs vsadd
-   - 0b100010: vmulhsu vs vssubu
-   - 0b100011: vmulhu vs vssub
-   - 0b100100: vmadd vs vaaddu
-   - 0b100101: vnmsub vs vaadd
-   - 0b100110: vmacc vs vasubu
-   - 0b100111: vnmsac vs vasub
-   
-   Resolution: Multiply checked first, arithmetic as fallback
-
-4. WIDENING MULTIPLY vs SCALING SHIFT (funct6=0b101010, 0b101100):
-   (funct6)  (widening multiply) (scaling shift)
-   - 0b101010: vwmulsu vs vssrl
-   - 0b101100: vwmacc vs vnclipu
-   Resolution: Widening multiply checked first, scaling shift as fallback
-
-
 If a better way to resolve conflicts is found, please update the code accordingly.
 This works for me so I will keep it this way but updates are welcome :)
 """
@@ -53,651 +14,737 @@ from typing import Optional, Tuple
 
 
 def extract_fields(instruction: int) -> Tuple[int, int, int, int, int, int, int, int]:
-    """
-    Extract all relevant fields from a 32-bit instruction.
 
-    Returns a tuple of (opcode, funct6, vm, vs2, vs1_rs1, funct3, vd_rd, imm5)
-    """
+    # page 21 of RISC-V V spec 1.0
     opcode = instruction & 0x7F          # bits [6:0]
-    funct6 = (instruction >> 26) & 0x3F  # bits [31:26]
-    vm = (instruction >> 25) & 0x1       # bit [25]
-    vs2 = (instruction >> 20) & 0x1F     # bits [24:20]
-    vs1_rs1 = (instruction >> 15) & 0x1F # bits [19:15]
-    funct3 = (instruction >> 12) & 0x7   # bits [14:12]
     vd_rd = (instruction >> 7) & 0x1F    # bits [11:7]
-    imm5 = vs1_rs1                       # bits [19:15] when used as immediate
+    funct3 = (instruction >> 12) & 0x7   # bits [14:12]
+    vs1_rs1 = (instruction >> 15) & 0x1F # bits [19:15]
+    vs2 = (instruction >> 20) & 0x1F     # bits [24:20]
+    vm = (instruction >> 25) & 0x1       # bit [25]
+    funct6 = (instruction >> 26) & 0x3F  # bits [31:26]
+    imm5 = vs1_rs1                       # bits [19:15]
     
     return opcode, funct6, vm, vs2, vs1_rs1, funct3, vd_rd, imm5
 
 
 def get_operand_category(funct3: int) -> Optional[str]:
-    """
-    Determine operand category from funct3 field.
     
-    Returns the operand category string or None if invalid
-    """
+    # page 42 of RISC-V V spec 1.0
     category_map = {
-        0b000: 'OPIVV',  # Vector-Vector Integer
-        0b001: 'OPFVV',  # Vector-Vector Floating-Point
-        0b010: 'OPMVV',  # Vector-Vector Mask
-        0b011: 'OPIVI',  # Vector-Immediate Integer
-        0b100: 'OPIVX',  # Vector-Scalar Integer
-        0b101: 'OPFVF',  # Vector-Scalar Floating-Point
-        0b110: 'OPMVX',  # Vector-Scalar Mask
+        0b000: 'OPIVV',
+        0b001: 'OPFVV',
+        0b010: 'OPMVV',
+        0b011: 'OPIVI',
+        0b100: 'OPIVX',
+        0b101: 'OPFVF',
+        0b110: 'OPMVX',
         0b111: 'OPCFG',  # Configuration
     }
     return category_map.get(funct3)
 
+# Instruction mnemoics from pages 95-98 of RISC-V V spec 1.0
 
-def get_integer_arithmetic_mnemonic(funct6: int, category: str) -> Optional[str]:
-    """
-    Get mnemonic for integer arithmetic instructions.
+def get_OPIVV_mnemonic(funct6: int) -> Tuple[Optional[str], bool]:
 
-    Returns the instruction mnemonic or None if not found
-    """
-    # Integer arithmetic opcode table (from RISC-V V spec 1.0)
     opcode_map = {
-        # OPIVV
-        ('OPIVV', 0b000000): 'vadd',
-        ('OPIVV', 0b000010): 'vsub',
-        ('OPIVV', 0b000011): 'vrsub',
-        ('OPIVV', 0b000100): 'vminu',
-        ('OPIVV', 0b000101): 'vmin',
-        ('OPIVV', 0b000110): 'vmaxu',
-        ('OPIVV', 0b000111): 'vmax',
-        ('OPIVV', 0b001001): 'vand',
-        ('OPIVV', 0b001010): 'vor',
-        ('OPIVV', 0b001011): 'vxor',
-        ('OPIVV', 0b001100): 'vrgather',
-        ('OPIVV', 0b001110): 'vslideup',
-        ('OPIVV', 0b001111): 'vslidedown',
-        ('OPIVV', 0b010000): 'vadc',
-        ('OPIVV', 0b010001): 'vmadc',
-        ('OPIVV', 0b010010): 'vsbc',
-        ('OPIVV', 0b010011): 'vmsbc',
-        ('OPIVV', 0b010111): 'vmerge',
-        ('OPIVV', 0b011000): 'vmseq',
-        ('OPIVV', 0b011001): 'vmsne',
-        ('OPIVV', 0b011010): 'vmsltu',
-        ('OPIVV', 0b011011): 'vmslt',
-        ('OPIVV', 0b011100): 'vmsleu',
-        ('OPIVV', 0b011101): 'vmsle',
-        ('OPIVV', 0b100000): 'vsaddu',
-        ('OPIVV', 0b100001): 'vsadd',
-        ('OPIVV', 0b100010): 'vssubu',
-        ('OPIVV', 0b100011): 'vssub',
-        ('OPIVV', 0b101000): 'vaaddu',
-        ('OPIVV', 0b101010): 'vasub',
-        ('OPIVV', 0b101100): 'vsmul',
-        ('OPIVV', 0b110000): 'vwaddu',
-        ('OPIVV', 0b110001): 'vwadd',
-        ('OPIVV', 0b110010): 'vwsubu',
-        ('OPIVV', 0b110011): 'vwsub',
-        ('OPIVV', 0b110100): 'vwaddu.w',
-        ('OPIVV', 0b110101): 'vwadd.w',
-        ('OPIVV', 0b110110): 'vwsubu.w',
-        ('OPIVV', 0b110111): 'vwsub.w',
+        0b000000: 'vadd',
+        0b000010: 'vsub',
+        0b000100: 'vminu',
+        0b000101: 'vmin',
+        0b000110: 'vmaxu',
+        0b000111: 'vmax',
+        0b001001: 'vand',
+        0b001010: 'vor',
+        0b001011: 'vxor',
+        0b001100: 'vrgather',
         
-        # OPIVX
-        ('OPIVX', 0b000000): 'vadd',
-        ('OPIVX', 0b000010): 'vsub',
-        ('OPIVX', 0b000011): 'vrsub',
-        ('OPIVX', 0b000100): 'vminu',
-        ('OPIVX', 0b000101): 'vmin',
-        ('OPIVX', 0b000110): 'vmaxu',
-        ('OPIVX', 0b000111): 'vmax',
-        ('OPIVX', 0b001001): 'vand',
-        ('OPIVX', 0b001010): 'vor',
-        ('OPIVX', 0b001011): 'vxor',
-        ('OPIVX', 0b001100): 'vrgather',
-        ('OPIVX', 0b001110): 'vslideup',
-        ('OPIVX', 0b001111): 'vslidedown',
-        ('OPIVX', 0b010000): 'vadc',
-        ('OPIVX', 0b010001): 'vmadc',
-        ('OPIVX', 0b010010): 'vsbc',
-        ('OPIVX', 0b010011): 'vmsbc',
-        ('OPIVX', 0b010111): 'vmerge',
-        ('OPIVX', 0b011000): 'vmseq',
-        ('OPIVX', 0b011001): 'vmsne',
-        ('OPIVX', 0b011010): 'vmsltu',
-        ('OPIVX', 0b011011): 'vmslt',
-        ('OPIVX', 0b011100): 'vmsleu',
-        ('OPIVX', 0b011101): 'vmsle',
-        ('OPIVX', 0b011110): 'vmsgtu',
-        ('OPIVX', 0b011111): 'vmsgt',
-        ('OPIVX', 0b100000): 'vsaddu',
-        ('OPIVX', 0b100001): 'vsadd',
-        ('OPIVX', 0b100010): 'vssubu',
-        ('OPIVX', 0b100011): 'vssub',
-        ('OPIVX', 0b101000): 'vaaddu',
-        ('OPIVX', 0b101010): 'vasubu',
-        ('OPIVX', 0b101100): 'vsmul',
-        ('OPIVX', 0b110000): 'vwaddu',
-        ('OPIVX', 0b110001): 'vwadd',
-        ('OPIVX', 0b110010): 'vwsubu',
-        ('OPIVX', 0b110011): 'vwsub',
-        ('OPIVX', 0b110100): 'vwaddu.w',
-        ('OPIVX', 0b110101): 'vwadd.w',
-        ('OPIVX', 0b110110): 'vwsubu.w',
-        ('OPIVX', 0b110111): 'vwsub.w',
+        0b010000: 'vadc',
+        0b010001: 'vmadc',
+        0b010010: 'vsbc',
+        0b010011: 'vmsbc',
+        0b010111: 'vmerge',
+        0b011000: 'vmseq',
+        0b011001: 'vmsne',
+        0b011010: 'vmsltu',
+        0b011011: 'vmslt',
+        0b011100: 'vmsleu',
+        0b011101: 'vmsle',
         
-        # OPIVI
-        ('OPIVI', 0b000000): 'vadd',
-        ('OPIVI', 0b000011): 'vrsub',
-        ('OPIVI', 0b001001): 'vand',
-        ('OPIVI', 0b001010): 'vor',
-        ('OPIVI', 0b001011): 'vxor',
-        ('OPIVI', 0b001100): 'vrgather',
-        ('OPIVI', 0b001110): 'vslideup',
-        ('OPIVI', 0b001111): 'vslidedown',
-        ('OPIVI', 0b010000): 'vadc',
-        ('OPIVI', 0b010001): 'vmadc',
-        ('OPIVI', 0b010111): 'vmerge',
-        ('OPIVI', 0b011000): 'vmseq',
-        ('OPIVI', 0b011001): 'vmsne',
-        ('OPIVI', 0b011010): 'vmsleu',
-        ('OPIVI', 0b011011): 'vmsle',
-        ('OPIVI', 0b011110): 'vmsgtu',
-        ('OPIVI', 0b011111): 'vmsgt',
-        ('OPIVI', 0b100000): 'vsaddu',
-        ('OPIVI', 0b100001): 'vsadd',
+        0b100000: 'vsaddu',
+        0b100001: 'vsadd',
+        0b100010: 'vssubu',
+        0b100011: 'vssub',
+        0b100101: 'vsll',
+        0b101100: 'vsmul',
+        0b101000: 'vsrl',
+        0b101001: 'vsra',
+        0b101010: 'vssrl',
+        0b101011: 'vssra',
+        0b101100: 'vnsrl',
+        0b101101: 'vnsra',
+        0b101110: 'vnclipu',
+        0b101111: 'vnclip',
+        
+        0b110000: 'vwredsumu',
+        0b110001: 'vwredsum'
     }
     
-    return opcode_map.get((category, funct6))
+    return (opcode_map.get(funct6), False)
 
-
-def get_shift_mnemonic(funct6: int, category: str) -> Optional[str]:
-    """
-    Get mnemonic for shift instructions.
-    
-    Returns the instruction mnemonic or None if not found
-    """
-    shift_map = {
-        ('OPIVV', 0b100101): 'vsll',
-        ('OPIVV', 0b101000): 'vsrl',
-        ('OPIVV', 0b101001): 'vsra',
-        ('OPIVV', 0b101010): 'vssrl',
-        ('OPIVV', 0b101011): 'vssra',
-        ('OPIVV', 0b101100): 'vnsrl',
-        ('OPIVV', 0b101101): 'vnsra',
-        ('OPIVV', 0b101110): 'vnclipu',
-        ('OPIVV', 0b101111): 'vnclip',
         
-        ('OPIVX', 0b100101): 'vsll',
-        ('OPIVX', 0b101000): 'vsrl',
-        ('OPIVX', 0b101001): 'vsra',
-        ('OPIVX', 0b101010): 'vssrl',
-        ('OPIVX', 0b101011): 'vssra',
-        ('OPIVX', 0b101100): 'vnsrl',
-        ('OPIVX', 0b101101): 'vnsra',
-        ('OPIVX', 0b101110): 'vnclipu',
-        ('OPIVX', 0b101111): 'vnclip',
+def get_OPIVX_mnemonic(funct6: int) -> Tuple[Optional[str], bool]:
         
-        ('OPIVI', 0b100101): 'vsll',
-        ('OPIVI', 0b101000): 'vsrl',
-        ('OPIVI', 0b101001): 'vsra',
-        ('OPIVI', 0b101010): 'vssrl',
-        ('OPIVI', 0b101011): 'vssra',
-        ('OPIVI', 0b101100): 'vnsrl',
-        ('OPIVI', 0b101101): 'vnsra',
-        ('OPIVI', 0b101110): 'vnclipu',
-        ('OPIVI', 0b101111): 'vnclip',
-    }
-    
-    return shift_map.get((category, funct6))
-
-
-def get_multiply_mnemonic(funct6: int, category: str) -> Optional[str]:
-    """
-    Get mnemonic for multiply instructions.
-    
-    Returns the instruction mnemonic or None if not found
-    """
-    mul_map = {
-        ('OPIVV', 0b100101): 'vmul',
-        ('OPIVV', 0b100111): 'vmulh',
-        ('OPIVV', 0b100110): 'vmulhu',
-        ('OPIVV', 0b100100): 'vmulhsu',
-        ('OPIVV', 0b101001): 'vmadd',
-        ('OPIVV', 0b101011): 'vnmsub',
-        ('OPIVV', 0b101101): 'vmacc',
-        ('OPIVV', 0b101111): 'vnmsac',
-        ('OPIVV', 0b111000): 'vwmulu',
-        ('OPIVV', 0b111010): 'vwmulsu',
-        ('OPIVV', 0b111011): 'vwmul',
-        ('OPIVV', 0b111100): 'vwmaccu',
-        ('OPIVV', 0b111101): 'vwmacc',
-        ('OPIVV', 0b111110): 'vwmaccus',
-        ('OPIVV', 0b111111): 'vwmaccsu',
+        opcode_map = {    
+        0b000000: 'vadd',
+        0b000010: 'vsub',
+        0b000011: 'vrsub',
+        0b000100: 'vminu',
+        0b000101: 'vmin',
+        0b000110: 'vmaxu',
+        0b000111: 'vmax',
+        0b001001: 'vand',
+        0b001010: 'vor',
+        0b001011: 'vxor',
+        0b001100: 'vrgather',
+        0b001110: 'vslideup',
+        0b001111: 'vslidedown',
         
-        ('OPIVX', 0b100101): 'vmul',
-        ('OPIVX', 0b100111): 'vmulh',
-        ('OPIVX', 0b100110): 'vmulhu',
-        ('OPIVX', 0b100100): 'vmulhsu',
-        ('OPIVX', 0b101001): 'vmadd',
-        ('OPIVX', 0b101011): 'vnmsub',
-        ('OPIVX', 0b101101): 'vmacc',
-        ('OPIVX', 0b101111): 'vnmsac',
-        ('OPIVX', 0b111000): 'vwmulu',
-        ('OPIVX', 0b111010): 'vwmulsu',
-        ('OPIVX', 0b111011): 'vwmul',
-        ('OPIVX', 0b111100): 'vwmaccu',
-        ('OPIVX', 0b111101): 'vwmacc',
-        ('OPIVX', 0b111110): 'vwmaccus',
-        ('OPIVX', 0b111111): 'vwmaccsu',
-    }
-    
-    return mul_map.get((category, funct6))
-
-
-def get_floating_point_mnemonic(funct6: int, category: str) -> Optional[str]:
-    """
-    Get mnemonic for floating-point instructions.
-    
-    Returns the instruction mnemonic or None if not found
-    """
-    fp_map = {
-        ('OPFVV', 0b000000): 'vfadd',
-        ('OPFVV', 0b000010): 'vfsub',
-        ('OPFVV', 0b000100): 'vfmin',
-        ('OPFVV', 0b000101): 'vfmax',
-        ('OPFVV', 0b000110): 'vfsgnj',
-        ('OPFVV', 0b000111): 'vfsgnjn',
-        ('OPFVV', 0b001000): 'vfsgnjx',
-        ('OPFVV', 0b001010): 'vfmul',
-        ('OPFVV', 0b001100): 'vfdiv',
-        ('OPFVV', 0b001110): 'vfrdiv',
-        ('OPFVV', 0b010000): 'vfmacc',
-        ('OPFVV', 0b010001): 'vfnmacc',
-        ('OPFVV', 0b010010): 'vfmsac',
-        ('OPFVV', 0b010011): 'vfnmsac',
-        ('OPFVV', 0b010100): 'vfmadd',
-        ('OPFVV', 0b010101): 'vfnmadd',
-        ('OPFVV', 0b010110): 'vfmsub',
-        ('OPFVV', 0b010111): 'vfnmsub',
-        ('OPFVV', 0b011000): 'vfmul',
-        ('OPFVV', 0b011010): 'vfredosum',
-        ('OPFVV', 0b011011): 'vfredusum',
-        ('OPFVV', 0b011100): 'vfredmax',
-        ('OPFVV', 0b011101): 'vfredmin',
-        ('OPFVV', 0b100000): 'vfwmacc',
-        ('OPFVV', 0b100001): 'vfwnmacc',
-        ('OPFVV', 0b100010): 'vfwmsac',
-        ('OPFVV', 0b100011): 'vfwnmsac',
-        ('OPFVV', 0b100100): 'vfwmul',
-        ('OPFVV', 0b101000): 'vfadd',
-        ('OPFVV', 0b101010): 'vfsub',
-        ('OPFVV', 0b101100): 'vfwadd',
-        ('OPFVV', 0b101101): 'vfwsub',
-        ('OPFVV', 0b101110): 'vfwadd',
-        ('OPFVV', 0b101111): 'vfwsub',
-        ('OPFVV', 0b110000): 'vfmul',
-        ('OPFVV', 0b110100): 'vfwmul',
-        ('OPFVV', 0b110110): 'vfwmul',
-        ('OPFVV', 0b111000): 'vfdiv',
-        ('OPFVV', 0b111010): 'vfrdiv',
-        ('OPFVV', 0b111100): 'vfwmacc',
-        ('OPFVV', 0b111101): 'vfwnmacc',
-        ('OPFVV', 0b111110): 'vfwmsac',
-        ('OPFVV', 0b111111): 'vfwnmsac',
+        0b010000: 'vadc',
+        0b010001: 'vmadc',
+        0b010010: 'vsbc',
+        0b010011: 'vmsbc',
+        0b010111: 'vmerge',
+        0b011000: 'vmseq',
+        0b011001: 'vmsne',
+        0b011010: 'vmsltu',
+        0b011011: 'vmslt',
+        0b011100: 'vmsleu',
+        0b011101: 'vmsle',
+        0b011110: 'vmsgtu',
+        0b011111: 'vmsgt',
         
-        ('OPFVF', 0b000000): 'vfadd',
-        ('OPFVF', 0b000010): 'vfsub',
-        ('OPFVF', 0b000100): 'vfmin',
-        ('OPFVF', 0b000101): 'vfmax',
-        ('OPFVF', 0b000110): 'vfsgnj',
-        ('OPFVF', 0b000111): 'vfsgnjn',
-        ('OPFVF', 0b001000): 'vfsgnjx',
-        ('OPFVF', 0b001010): 'vfmul',
-        ('OPFVF', 0b001100): 'vfdiv',
-        ('OPFVF', 0b001110): 'vfrdiv',
-        ('OPFVF', 0b010000): 'vfmacc',
-        ('OPFVF', 0b010001): 'vfnmacc',
-        ('OPFVF', 0b010010): 'vfmsac',
-        ('OPFVF', 0b010011): 'vfnmsac',
-        ('OPFVF', 0b010100): 'vfmadd',
-        ('OPFVF', 0b010101): 'vfnmadd',
-        ('OPFVF', 0b010110): 'vfmsub',
-        ('OPFVF', 0b010111): 'vfnmsub',
-        ('OPFVF', 0b100000): 'vfwmacc',
-        ('OPFVF', 0b100001): 'vfwnmacc',
-        ('OPFVF', 0b100010): 'vfwmsac',
-        ('OPFVF', 0b100011): 'vfwnmsac',
-        ('OPFVF', 0b100100): 'vfwmul',
-        ('OPFVF', 0b101000): 'vfadd',
-        ('OPFVF', 0b101010): 'vfsub',
-        ('OPFVF', 0b101100): 'vfwadd',
-        ('OPFVF', 0b101101): 'vfwsub',
-        ('OPFVF', 0b101110): 'vfwadd',
-        ('OPFVF', 0b101111): 'vfwsub',
-        ('OPFVF', 0b110000): 'vfmul',
-        ('OPFVF', 0b110100): 'vfwmul',
-        ('OPFVF', 0b110110): 'vfwmul',
-        ('OPFVF', 0b111000): 'vfdiv',
-        ('OPFVF', 0b111010): 'vfrdiv',
-        ('OPFVF', 0b111100): 'vfwmacc',
-        ('OPFVF', 0b111101): 'vfwnmacc',
-        ('OPFVF', 0b111110): 'vfwmsac',
-        ('OPFVF', 0b111111): 'vfwnmsac',
+        0b100000: 'vsaddu',
+        0b100001: 'vsadd',
+        0b100010: 'vssubu',
+        0b100011: 'vssub',
+        0b100101: 'vsll',
+        0b101100: 'vsmul',
+        0b101000: 'vsrl',
+        0b101001: 'vsra',
+        0b101010: 'vssrl',
+        0b101011: 'vssra',
+        0b101100: 'vnsrl',
+        0b101101: 'vnsra',
+        0b101110: 'vnclipu',
+        0b101111: 'vnclip'
+        }
+        
+        return (opcode_map.get(funct6), False)
+        
+        
+def get_OPIVI_mnemonic(funct6: int) -> Tuple[Optional[str], bool]:    
+     
+    opcode_map = {
+        0b000000: 'vadd',
+        0b000011: 'vrsub',
+        0b001001: 'vand',
+        0b001010: 'vor',
+        0b001011: 'vxor',
+        0b001100: 'vrgather',
+        0b001110: 'vslideup',
+        0b001111: 'vslidedown',
+        
+        0b010000: 'vadc',
+        0b010001: 'vmadc',
+        0b010111: 'vmerge',
+        0b011000: 'vmseq',
+        0b011001: 'vmsne',
+        0b011010: 'vmsleu',
+        0b011011: 'vmsle',
+        0b011110: 'vmsgtu',
+        0b011111: 'vmsgt',
+        
+        0b100000: 'vsaddu',
+        0b100001: 'vsadd',
+        0b100101: 'vsll',
+        0b101000: 'vsrl',
+        0b101001: 'vsra',
+        0b101010: 'vssrl',
+        0b101011: 'vssra',
+        0b101100: 'vnsrl',
+        0b101101: 'vnsra',
+        0b101110: 'vnclipu',
+        0b101111: 'vnclip'
     }
     
-    return fp_map.get((category, funct6))
+    return (opcode_map.get(funct6), False)
 
 
-def get_reduction_mnemonic(funct6: int, category: str) -> Optional[str]:
-    """
-    Get mnemonic for reduction instructions.
+def get_OPMVV_mnemonic(funct6: int, vs1: int) -> Tuple[Optional[str], bool]:
+ 
+    if funct6 == 0b010000 or funct6 == 0b010010 or funct6 == 0b010100:
+        opcode_map = {
+            # VWXUNARY0
+            (0b010000, 0b00000): 'vmv.x.s',
+            (0b010000, 0b10000): 'vcpop.m',
+            (0b010000, 0b10001): 'vfirst.m',
+            #VXUNARY0
+            (0b010010, 0b00010): 'vzext.vf8',
+            (0b010010, 0b00011): 'vsext.vf8',
+            (0b010010, 0b00100): 'vzext.vf4',
+            (0b010010, 0b00101): 'vsext.vf4',
+            (0b010010, 0b00110): 'vzext.vf2',
+            (0b010010, 0b00111): 'vsext.vf2',
+            #VMUNARY0
+            (0b010100, 0b00001): 'vmsbf.m',
+            (0b010100, 0b00010): 'vmsof.m',
+            (0b010100, 0b00011): 'vmsif.m',
+            (0b010100, 0b10000): 'viota.m',
+            (0b010100, 0b10001): 'vid.v', # Not sure about this one
+        }
+        return opcode_map.get((funct6, vs1)), True
     
-    Returns the instruction mnemonic or None if not found
-    """
-    red_map = {
-        ('OPIVV', 0b000000): 'vredsum',
-        ('OPIVV', 0b000001): 'vredand',
-        ('OPIVV', 0b000010): 'vredor',
-        ('OPIVV', 0b000011): 'vredxor',
-        ('OPIVV', 0b000100): 'vredminu',
-        ('OPIVV', 0b000101): 'vredmin',
-        ('OPIVV', 0b000110): 'vredmaxu',
-        ('OPIVV', 0b000111): 'vredmax',
-        ('OPIVX', 0b000000): 'vredsum',
-        ('OPIVX', 0b000001): 'vredand',
-        ('OPIVX', 0b000010): 'vredor',
-        ('OPIVX', 0b000011): 'vredxor',
-        ('OPIVX', 0b000100): 'vredminu',
-        ('OPIVX', 0b000101): 'vredmin',
-        ('OPIVX', 0b000110): 'vredmaxu',
-        ('OPIVX', 0b000111): 'vredmax',
+    opcode_map = {
+        0b000000: 'vredsum',
+        0b000001: 'vredand',
+        0b000010: 'vredor',
+        0b000011: 'vredxor',
+        0b000100: 'vredminu',
+        0b000101: 'vredmin',
+        0b000110: 'vredmaxu',
+        0b000111: 'vredmax',
+        0b001000: 'vaaddu',
+        0b001001: 'vaadd',
+        0b001010: 'vasubu',
+        0b001011: 'vasub',
+        
+        # These should've been handeled earlier
+        0b010000: 'VWXUNARY0',
+        0b010010: 'VXUNARY0',
+        0b010100: 'VMUNARY0',
+        
+        0b010111: 'vcompress',
+        0b011000: 'vmandnot',
+        0b011001: 'vmand',
+        0b011010: 'vmor',
+        0b011011: 'vmxor',
+        0b011100: 'vmornot',
+        0b011101: 'vmnand',
+        0b011110: 'vmnor',
+        0b011111: 'vmxnor',
+        
+        0b100000: 'vdivu',
+        0b100001: 'vdiv',
+        0b100010: 'vremu',
+        0b100011: 'vrem',
+        0b100100: 'vmulhu',
+        0b100101: 'vmul',
+        0b100110: 'vmulhsu',
+        0b100111: 'vmulh',
+        0b101001: 'vmadd',
+        0b101011: 'vnmsub',
+        0b101101: 'vmacc',
+        0b101111: 'vnmsac',
+        
+        0b110000: 'vwaddu',
+        0b110001: 'vwadd',
+        0b110010: 'vwsubu',
+        0b110011: 'vwsub',
+        0b110100: 'vwaddu.w',
+        0b110101: 'vwadd.w',
+        0b110110: 'vwsubu.w',
+        0b110111: 'vwsub.w',
+        0b111000: 'vwmulu',
+        0b111010: 'vwmulsu',
+        0b111011: 'vwmul',
+        0b111100: 'vwmaccu',
+        0b111101: 'vwmacc',
+        0b111111: 'vwmaccsu'
+    }
+    return (opcode_map.get(funct6), False)
+
+def get_OPMVX_mnemonic(funct6: int, vs1: int) -> Tuple[Optional[str], bool]:
+ 
+    if funct6 == 0b010000:
+        opcode_map = {
+            # VRXUNARY0
+            (0b010000, 0b00000): 'vmv.s.x',
+        }
+        return (opcode_map.get((funct6, vs1)), True)
+ 
+    opcode_map = {
+        0b001000: 'vaaddu',
+        0b001001: 'vaadd',
+        0b001010: 'vasubu',
+        0b001011: 'vasub',
+        0b001110: 'vslide1up',
+        0b001111: 'vslide1down',
+        
+        # Should've been handeled earlier
+        0b010000: 'VRXUNARY0', 
+        
+        0b100000: 'vdivu',
+        0b100001: 'vdiv',
+        0b100010: 'vremu',
+        0b100011: 'vrem',
+        0b100100: 'vmulhu',
+        0b100101: 'vmul',
+        0b100110: 'vmulhsu',
+        0b100111: 'vmulh',
+        0b101001: 'vmadd',
+        0b101011: 'vnmsub',
+        0b101101: 'vmacc',
+        0b101111: 'vnmsac',
+        
+        0b110000: 'vwaddu',
+        0b110001: 'vwadd',
+        0b110010: 'vwsubu',
+        0b110011: 'vwsub',
+        0b110100: 'vwaddu.w',
+        0b110101: 'vwadd.w',
+        0b110110: 'vwsubu.w',
+        0b110111: 'vwsub.w',
+        0b111000: 'vwmulu',
+        0b111010: 'vwmulsu',
+        0b111011: 'vwmul',
+        0b111100: 'vwmaccu',
+        0b111101: 'vwmacc',
+        0b111110: 'vwmaccus',
+        0b111111: 'vwmaccsu'
     }
     
-    return red_map.get((category, funct6))
+    return (opcode_map.get(funct6), False)
 
 
-def get_mask_mnemonic(funct6: int, category: str) -> Optional[str]:
-    """
-    Get mnemonic for mask instructions.
+
+def get_OPFVV_mnemonic(funct6: int, vs1: int) -> Tuple[Optional[str], bool]:
     
-    Returns the instruction mnemonic or None if not found
-    """
-    mask_map = {
-        ('OPMVV', 0b010000): 'vadc',
-        ('OPMVV', 0b010010): 'vmsbc',
-        ('OPMVV', 0b010100): 'vmerge',
-        ('OPMVV', 0b010111): 'vmv',
-        ('OPMVV', 0b011000): 'vmseq',
-        ('OPMVV', 0b011001): 'vmsne',
-        ('OPMVV', 0b011010): 'vmsltu',
-        ('OPMVV', 0b011011): 'vmslt',
-        ('OPMVV', 0b011100): 'vmsleu',
-        ('OPMVV', 0b011101): 'vmsle',
-        ('OPMVV', 0b011110): 'vmsgtu',
-        ('OPMVV', 0b011111): 'vmsgt',
-        ('OPMVX', 0b010000): 'vadc',
-        ('OPMVX', 0b010010): 'vmsbc',
-        ('OPMVX', 0b010100): 'vmerge',
-        ('OPMVX', 0b010111): 'vmv',
-        ('OPMVX', 0b011000): 'vmseq',
-        ('OPMVX', 0b011001): 'vmsne',
-        ('OPMVX', 0b011010): 'vmsltu',
-        ('OPMVX', 0b011011): 'vmslt',
-        ('OPMVX', 0b011100): 'vmsleu',
-        ('OPMVX', 0b011101): 'vmsle',
-        ('OPMVX', 0b011110): 'vmsgtu',
-        ('OPMVX', 0b011111): 'vmsgt',
+    if funct6 == 0b010000 or funct6 == 0b010010 or funct6 == 0b010011:
+        opcode_map = {
+            # VWFUNARY0
+            (0b010000, 0b00000): 'vfmv.f.s',
+            
+            #VFUNARY0
+            (0b010010, 0b00000): 'vfcvt.xu.f.v',
+            (0b010010, 0b00001): 'vfcvt.x.f.v',
+            (0b010010, 0b00010): 'vfcvt.f.xu.v',
+            (0b010010, 0b00011): 'vfcvt.f.x.v',
+            (0b010010, 0b00110): 'vfcvt.rtz.xu.f.v',
+            (0b010010, 0b00111): 'vfcvt.rtz.x.f.v',
+            
+            (0b010010, 0b01000): 'vfwcvt.xu.f.v',
+            (0b010010, 0b01001): 'vfwcvt.x.f.v',
+            (0b010010, 0b01010): 'vfwcvt.f.xu.v',
+            (0b010010, 0b01011): 'vfwcvt.f.x.v',
+            (0b010010, 0b01100): 'vfwcvt.f.f.v',
+            (0b010010, 0b01110): 'vfwcvt.rtz.xu.f.v',
+            (0b010010, 0b01111): 'vfwcvt.rtz.x.f.v',
+            
+            (0b010010, 0b10000): 'vfncvt.xu.f.w',
+            (0b010010, 0b10001): 'vfncvt.x.f.w',
+            (0b010010, 0b10010): 'vfncvt.f.xu.w',
+            (0b010010, 0b10011): 'vfncvt.f.x.w',
+            (0b010010, 0b10100): 'vfncvt.f.f.w',
+            (0b010010, 0b10101): 'vfncvt.rod.f.f.w',
+            (0b010010, 0b10110): 'vfncvt.rtz.xu.f.w',
+            (0b010010, 0b10111): 'vfncvt.rtz.x.f.w',
+                      
+            #VFUNARY1
+            (0b010011, 0b00000): 'vfsqrt.v',
+            (0b010011, 0b00100): 'vfrsqrt7.v',
+            (0b010011, 0b00101): 'vfrec7.v',
+            (0b010011, 0b10000): 'vfclass.v',
+        }
+        return (opcode_map.get((funct6, vs1)), True)
+    
+    opcode_map = {
+        0b000000: 'vfadd',
+        0b000001: 'vfredusum',
+        0b000010: 'vfsub',
+        0b000011: 'vfredosum',
+        0b000100: 'vfmin',
+        0b000101: 'vfredmin',
+        0b000110: 'vfmax',
+        0b000111: 'vfredmax',
+        0b001000: 'vfsgnj',
+        0b001001: 'vfsgnjn',
+        0b001010: 'vfsgnjx',
+        0b001110: 'vfslide1up',
+        0b001111: 'vfslide1down',
+        
+        # Should've been handeled earlier
+        0b010000: 'VWFUNARY0',
+        0b010010: 'VFUNARY0',
+        0b010011: 'VFUNARY1',
+        
+        0b011000: 'vmfeq', 
+        0b011001: 'vmfle',
+        0b011011: 'vmflt',
+        0b011100: 'vmfne',
+        
+        0b100000: 'vfdiv',
+        0b100100: 'vfmul',
+        0b101000: 'vfmadd',
+        0b101001: 'vfnmadd',
+        0b101010: 'vfmsub',
+        0b101011: 'vfnmsub',
+        0b101100: 'vfmacc',
+        0b101101: 'vfnmacc',
+        0b101110: 'vfmsac',
+        0b101111: 'vfnmsac',
+        
+        0b110000: 'vfwadd',
+        0b110001: 'vfwredusum',
+        0b110010: 'vfwsub',
+        0b110011: 'vfwredosum',
+        0b110100: 'vfwadd.w',
+        0b110110: 'vfwsub.w',
+        0b111000: 'vfwmul',
+        0b111100: 'vfwmacc',
+        0b111101: 'vfwnmacc',   
+        0b111110: 'vfwmsac',
+        0b111111: 'vfwnmsac',
+    }
+    return (opcode_map.get(funct6), False)
+
+       
+def get_OPFVF_mnemonic(funct6: int, vs1: int) -> Tuple[Optional[str], bool]:
+        
+    if funct6 == 0b010000:
+        opcode_map = {
+            # VRFUNARY0
+            (0b010000, 0b00000): 'vfmv.s.f'
+        }
+        return (opcode_map.get((funct6, vs1)), True)
+        
+    opcode_map = { 
+        0b000000: 'vfadd',
+        0b000010: 'vfsub',
+        0b000100: 'vfmin',
+        0b000110: 'vfmax',
+        0b001000: 'vfsgnj',
+        0b001001: 'vfsgnjn',
+        0b001010: 'vfsgnjx',
+        0b001110: 'vfslide1up',
+        0b001111: 'vfslide1down',
+        
+        #TODO Handle unary ops separately later
+        0b010000: 'VRFUNARY0',
+        
+        0b010111: 'vfmerge',
+        0b011000: 'vmfeq', 
+        0b011001: 'vmfle',
+        0b011011: 'vmflt',
+        0b011100: 'vmfne',
+        0b011101: 'vmfgt',
+        0b011111: 'vmfge',
+        
+        0b100000: 'vfdiv',
+        0b100001: 'vfrdiv',
+        0b100100: 'vfmul',
+        0b100111: 'vfrsub',
+        0b101000: 'vfmadd',
+        0b101001: 'vfnmadd',
+        0b101010: 'vfmsub',
+        0b101011: 'vfnmsub',
+        0b101100: 'vfmacc',
+        0b101101: 'vfnmacc',
+        0b101110: 'vfmsac',
+        0b101111: 'vfnmsac',
+        
+        0b110000: 'vfwadd',
+        0b110010: 'vfwsub',
+        0b110100: 'vfwadd.w',
+        0b110110: 'vfwsub.w',
+        0b111000: 'vfwmul',
+        0b111100: 'vfwmacc',
+        0b111101: 'vfwnmacc',   
+        0b111110: 'vfwmsac',
+        0b111111: 'vfwnmsac',
+
     }
     
-    return mask_map.get((category, funct6))
+    return (opcode_map.get(funct6), False)
 
 
-def get_config_mnemonic(funct6: int, vs2: int, vs1_rs1: int) -> Optional[str]:
-    """
-    Get mnemonic for configuration instructions.
-    
-    Returns the instruction mnemonic or None if not found
-    """
+def get_config_mnemonic(funct6: int, vs2: int, vs1_rs1: int) -> Tuple[Optional[str], bool]:
+
     if funct6 == 0b000000:
         if vs2 == 0b11111:
-            return 'vsetvli'
+            return ('vsetvli', False)
         else:
-            return 'vsetvl'
+            return ('vsetvl', False)
     elif funct6 == 0b100000:
-        return 'vsetivli'
+        return ('vsetivli', False)
     
-    return None
+    return (None, False)
 
 
-def get_mnemonic(funct6: int, category: str, vs2: int, vs1_rs1: int, vd_rd: int = None) -> Optional[str]:
-    """
-    Get instruction mnemonic from funct6 and category.
-    
-    Uses additional fields (vd_rd) when provided to better distinguish between
-    instructions that share the same funct6 value.
-    
-    Args:
-        funct6: The funct6 field
-        category: The operand category
-        vs2: The vs2 field
-        vs1_rs1: The vs1/rs1 field
-        vd_rd: Optional destination register field (helps distinguish reductions)
-    
-    Returns:
-        The instruction mnemonic or None if not found
-    """
-    if category == 'OPCFG':
+def get_mnemonic(funct6: int, category: str, vs2: int, vs1_rs1: int) -> Tuple[Optional[str], bool]:
+
+    if category == 'OPIVV':
+        return get_OPIVV_mnemonic(funct6)
+    elif category == 'OPIVX':
+        return get_OPIVX_mnemonic(funct6)
+    elif category == 'OPIVI':
+        return get_OPIVI_mnemonic(funct6)
+    elif category == 'OPMVV':
+        return get_OPMVV_mnemonic(funct6, vs1_rs1)
+    elif category == 'OPMVX':
+        return get_OPMVX_mnemonic(funct6, vs1_rs1)
+    elif category == 'OPFVV':
+        return get_OPFVV_mnemonic(funct6, vs1_rs1)
+    elif category == 'OPFVF':
+        return get_OPFVF_mnemonic(funct6, vs1_rs1)
+    elif category == 'OPCFG':
         return get_config_mnemonic(funct6, vs2, vs1_rs1)
-
-    elif category in ('OPFVV', 'OPFVF'):
-        return get_floating_point_mnemonic(funct6, category)
-
-    elif category in ('OPMVV', 'OPMVX'):
-        mnemonic = get_mask_mnemonic(funct6, category)
-        if mnemonic:
-            return mnemonic
-
-        # Some assemblers encode integer ops (e.g., vmul.vv) with funct3=010/110.
-        # Fall back to the equivalent integer category and try again.
-        if category == 'OPMVV' and funct6 == 0b100101:
-            return 'vmul'
-
-        category = 'OPIVV' if category == 'OPMVV' else 'OPIVX'
-
-    if category in ('OPIVV', 'OPIVX', 'OPIVI'):
-
-        # Don't change the order of these checks, they are in the most error free order. 
-
-        mnemonic = get_shift_mnemonic(funct6, category)
-        if mnemonic:
-            return mnemonic
-        
-        multiply_arithmetic_conflict_range = range(0b100000, 0b100111 + 1)
-        
-        if funct6 in multiply_arithmetic_conflict_range:
-            if category == 'OPIVV':
-
-                # For OPIVV, multiply takes priority (per RISC-V spec)
-                mnemonic = get_multiply_mnemonic(funct6, category)
-                if mnemonic:
-                    return mnemonic
-
-            # For OPIVX and OPIVI, arithmetic takes priority
-            mnemonic = get_integer_arithmetic_mnemonic(funct6, category)
-            if mnemonic:
-                return mnemonic
-
-            # Fallback to multiply (shouldn't normally match for OPIVX/OPIVI)
-            mnemonic = get_multiply_mnemonic(funct6, category)
-            if mnemonic:
-                return mnemonic
-        else:
-
-            # For non-conflicting funct6 values, check multiply first, then arithmetic
-            mnemonic = get_multiply_mnemonic(funct6, category)
-            if mnemonic:
-                return mnemonic
-            
-            mnemonic = get_integer_arithmetic_mnemonic(funct6, category)
-            if mnemonic:
-                return mnemonic
-        
-        # 3. Check reduction instructions last (they share funct6 with arithmetic)
-        reduction_funct6 = {0b000000, 0b000001, 0b000010, 0b000011,
-                           0b000100, 0b000101, 0b000110, 0b000111}
-        if funct6 in reduction_funct6:
-            mnemonic = get_reduction_mnemonic(funct6, category)
-            if mnemonic:
-                return mnemonic
-
-        return None
-    else:
-        return None
+    return None, False
 
 
-def decode_vtype(vtype: int) -> str:
-    """
-    Decode vtype field into SEW, LMUL, ta, ma format.
-    
-    vtype bits [30:20]:
-    - bits [30:29]: vill (illegal if != 0)
-    - bit [28]: vma (mask agnostic)
-    - bit [27]: vta (tail agnostic)
-    - bits [26:25]: vsew (SEW encoding: 0=e8, 1=e16, 2=e32, 3=e64)
-    - bits [24:22]: vlmul (LMUL encoding: 0=m1, 1=m2, 2=m4, 3=m8, 4=mf2, 5=mf4, 6=mf8, 7=reserved)
-    
-    Returns formatted string like "e64, m1, ta, ma"
-    """
-    vill = (vtype >> 9) & 0x3
-    if vill != 0:
+def decode_vtype(vtype: int, vll: int) -> str:
+
+    if vll == 0b1:
         return "ILLEGAL"
     
-    vma = (vtype >> 8) & 0x1
-    vta = (vtype >> 7) & 0x1
-    vsew = (vtype >> 5) & 0x3
     vlmul_raw = vtype & 0x7
+    vsew = (vtype >> 3) & 0x7
+    vta = (vtype >> 6) & 0x1
+    vma = (vtype >> 7) & 0x1
     
-    # Decode SEW
+    # e8  SEW=8b 
+    # e16 SEW=16b 
+    # e32 SEW=32b 
+    # e64 SEW=64b 
     sew_map = {0: "e8", 1: "e16", 2: "e32", 3: "e64"}
-    sew = sew_map.get(vsew, f"e{8 << vsew}")
+    sew = sew_map.get(vsew)
     
-    # Decode LMUL
+    # mf8  # LMUL=1/8 
+    # mf4  # LMUL=1/4 
+    # mf2  # LMUL=1/2 
+    # m1   # LMUL=1, assumed if m setting absent 
+    # m2   # LMUL=2 
+    # m4   # LMUL=4 
+    # m8   # LMUL=8
     lmul_map = {
         0: "m1", 1: "m2", 2: "m4", 3: "m8",
-        4: "mf2", 5: "mf4", 6: "mf8"
+        4: "--reserved--", 5: "mf8", 6: "mf4", 7: "mf2"
     }
-    lmul = lmul_map.get(vlmul_raw, f"m{vlmul_raw}")
+    lmul = lmul_map.get(vlmul_raw)
     
-    # Decode ta/ma
-    ta = "ta" if vta == 0 else "tu"
-    ma = "ma" if vma == 0 else "mu"
+    ta = "tu" if vta == 0 else "ta"
+    ma = "mu" if vma == 0 else "ma"
     
     return f"{sew}, {lmul}, {ta}, {ma}"
 
+def format_OPCFG(instruction, vd_rd, vs1_rs1, vs2) -> str:
+    
+    # vsetvli
+    if ((instruction >> 31) & 0x1) == 0b0:
+        zimm = (instruction >> 20) & 0x7FF # bits [30:20]
+        vtype = zimm & 0x7FF  # bits [30:20]
+        vtype_str = decode_vtype(vtype, (vtype >> 10) & 0x1)
+        return f"vsetvli x{vd_rd}, x{vs1_rs1}, {vtype_str}"
+    
+    # vsetivli
+    elif ((instruction >> 30) & 0x3) == 0b11:
+        uimm = vs1_rs1  # bits [19:15]
+        vtypei = (instruction >> 20) & 0x3FF  # bits [29:20]
+        vtype_str = decode_vtype(vtypei, (vtypei >> 9) & 0x1)
+        return f"vsetivli x{vd_rd}, {uimm}, {vtype_str}"
+    
+    # vsetvl
+    elif ((instruction >> 25) & 0x7F) == 0b1000000:
+        return f"vsetvl x{vd_rd}, x{vs1_rs1}, x{vs2}"
+    
+    else:
+        return "INVALID OPCFG"
 
-def get_load_store_mnemonic(opcode: int, funct3: int, width: int, mop: int, mew: int, nf: int) -> Optional[str]:
-    """
-    Get mnemonic for load/store instructions.
-    
-    Args:
-        opcode: Instruction opcode (0x07 for load, 0x27 for store)
-        funct3: funct3 field
-        width: width field (bits 14:12) - encodes memory access width
-        mop: memory operation type (bits 27:26)
-        mew: memory element width extension (bit 28)
-        nf: number of fields (bits 31:29)
-    
-    Returns mnemonic or None
-    """
+# Page 29-39 of RISC-V V spec 1.0
+def get_load_store_mnemonic(opcode: int, width: int, mop: int, mew: int, nf: int, lumop_sumop_rs2_vs2: int) -> Optional[str]:
     is_load = (opcode == 0x07)
     is_store = (opcode == 0x27)
     
     if not (is_load or is_store):
         return None
+        
+    eew_map = {
+        0b000: "8",
+        0b101: "16",
+        0b110: "32",
+        0b111: "64",
+    }
     
-    # For vector unit-stride loads/stores (mop=0b00)
-    # funct3 (width field bits 14:12) encodes EEW
-    if mop == 0b00:
-        # width encoding for vector loads/stores:
-        # 0b000 = 8-bit
-        # 0b101 = 16-bit  
-        # 0b110 = 32-bit
-        # 0b111 = 64-bit
-        width_map = {
-            0b000: ("vle8", "vse8"),
-            0b101: ("vle16", "vse16"),
-            0b110: ("vle32", "vse32"),
-            0b111: ("vle64", "vse64"),
-        }
-        mnemonic_pair = width_map.get(funct3)
-        if mnemonic_pair:
-            return mnemonic_pair[0] if is_load else mnemonic_pair[1]
+    eew = eew_map.get(width)
     
-    # For standard scalar loads/stores
-    if funct3 != 0b111:
-        width_map = {
-            0b000: "lb" if is_load else "sb",
-            0b001: "lh" if is_load else "sh",
-            0b010: "lw" if is_load else "sw",
-            0b011: "ld" if is_load else "sd",
-        }
-        return width_map.get(funct3)
+    if eew is None:
+        return None
+    #     # Scalar FP loads/stores are not supported since they are not vector instructions but for some reason are mentioned in the spec
+    #     if width == 0b001:
+    #         return "flh" if is_load else "fsh"
+    #     elif width == 0b010:
+    #         return "flw" if is_load else "fsw"
+    #     elif width == 0b011:
+    #         return "fld" if is_load else "fsd"
+    #     elif width == 0b100:
+    #         return "flq" if is_load else "fsq"
+    #     return None
+    
+    nfields = nf + 1
+    
+    if is_load:
+        if mop == 0b00:  # unit-stride
+            if lumop_sumop_rs2_vs2 == 0b00000:
+                if nf == 0:
+                    return f"vle{eew}"
+                else:
+                    return f"vlseg{nfields}e{eew}"
+            elif lumop_sumop_rs2_vs2 == 0b01000:
+                return f"vl{nfields}re{eew}"
+            elif lumop_sumop_rs2_vs2 == 0b01011:
+                return "vlm"
+            elif lumop_sumop_rs2_vs2 == 0b10000:
+                if nf == 0:
+                    return f"vle{eew}ff"
+                else:
+                    return f"vlseg{nfields}e{eew}ff"
+            else:
+                if nf == 0:
+                    return f"vle{eew}"
+                else:
+                    return f"vlseg{nfields}e{eew}"
+                
+        elif mop == 0b01:  # indexed-unordered
+            if nf == 0:
+                return f"vluxei{eew}"
+            else:
+                return f"vluxseg{nfields}ei{eew}"
+        elif mop == 0b10:  # strided
+            if nf == 0:
+                return f"vlse{eew}"
+            else:
+                return f"vlsseg{nfields}e{eew}"
+        elif mop == 0b11:  # indexed-ordered
+            if nf == 0:
+                return f"vloxei{eew}"
+            else:
+                return f"vloxseg{nfields}ei{eew}"
+    else:  # store
+        if mop == 0b00:  # unit-stride
+            if lumop_sumop_rs2_vs2 == 0b00000:
+                if nf == 0:
+                    return f"vse{eew}"
+                else:
+                    return f"vsseg{nfields}e{eew}"
+            elif lumop_sumop_rs2_vs2 == 0b01000:
+                return f"vs{nfields}r"
+            elif lumop_sumop_rs2_vs2 == 0b01011:
+                return "vsm"
+            else:
+                # Default to unit-stride
+                if nf == 0:
+                    return f"vse{eew}"
+                else:
+                    return f"vsseg{nfields}e{eew}"
+        elif mop == 0b01:  # indexed-unordered
+            if nf == 0:
+                return f"vsuxei{eew}"
+            else:
+                return f"vsuxseg{nfields}ei{eew}"
+        elif mop == 0b10:  # strided
+            if nf == 0:
+                return f"vsse{eew}"
+            else:
+                return f"vssseg{nfields}e{eew}"
+        elif mop == 0b11:  # indexed-ordered
+            if nf == 0:
+                return f"vsoxei{eew}"
+            else:
+                return f"vsoxseg{nfields}ei{eew}"
     
     return None
 
 
-def format_load_store(instruction: int) -> str:
-    """
-    Format load/store instruction.
+def format_load_store(instruction: int, opcode: int, vd_vs3: int, width: int, rs1: int, vm: int) -> str:
     
-    Format: vle64.v v1, (x1)
-    """
-    opcode = instruction & 0x7F
-    funct3 = (instruction >> 12) & 0x7
-    vd_rd = (instruction >> 7) & 0x1F
-    rs1 = (instruction >> 15) & 0x1F
-    vm = (instruction >> 25) & 0x1
+    # bits [6:0] opcode 
+    # bits [7:11] vd (destination of load) or vs3 (store data)
+    # bits [12:14] width (func3)
+    # bits [15:19] rs1 (base address)
+    # bits [20:24] (lumop or sumop, rs2 (stride), vs2 (address offset))
+    # bits [25] vm (mask)
+    # bits [26:27] mop (memory operation type)
+    # bit [28] mew (memory element width)
+    # bits [29:31] nf (number of fields - 1)
+    
+    lumop_sumop_rs2_vs2 = (instruction >> 20) & 0x1F
     mop = (instruction >> 26) & 0x3
     mew = (instruction >> 28) & 0x1
     nf = (instruction >> 29) & 0x7
     
-    mnemonic = get_load_store_mnemonic(opcode, funct3, 0, mop, mew, nf)
+    mnemonic = get_load_store_mnemonic(opcode, width, mop, mew, nf, lumop_sumop_rs2_vs2)
     if mnemonic is None:
         return "UNKNOWN"
     
-    # Add suffix - vector loads use .v suffix
-    if mop == 0b00:  # vector unit-stride
-        suffix = ".v"
-    else:
-        suffix = ""
-    full_mnemonic = f"{mnemonic}{suffix}"
+    is_load = (opcode == 0x07)
     
-    # Format: vle64.v v1, (x1) or vle64.v v1, (x1), v0.t
-    if vm == 0:
-        return f"{full_mnemonic} v{vd_rd}, (x{rs1}), v0.t"
+    # Whole register load: vl1re8.v v1, (x1) 
+    # Whole register store: vs1r.v v1, (x1)
+    # Mask load/store: vlm.v v1, (x1)
+    if (mnemonic.startswith("vl") and "re" in mnemonic) or (mnemonic.startswith("vs") and mnemonic.endswith("r")) or (mnemonic in ["vlm", "vsm"]):
+        return f"{mnemonic}.v v{vd_vs3}, (x{rs1})"
+    
+    # Strided segment: vlsseg3e8.v v1, (x1), x2 [, v0.t]
+    # Strided non-segment: vlse64.v v1, (x1), x2 [, v0.t]
+ 
+    elif (("sseg" in mnemonic or "lseg" in mnemonic) and mop == 0b10) or ("se" in mnemonic and mop == 0b10 and "seg" not in mnemonic) or ("xseg" in mnemonic) or ("xei" in mnemonic):
+        if vm == 0:
+            return f"{mnemonic}.v v{vd_vs3}, (x{rs1}), x{lumop_sumop_rs2_vs2}, v0.t"
+        else:
+            return f"{mnemonic}.v v{vd_vs3}, (x{rs1}), x{lumop_sumop_rs2_vs2}"
+    
+    # Indexed segment: vluxseg3ei32.v v1, (x1), v2 [, v0.t]
+    # Indexed non-segment: vluxei64.v v1, (x1), v2 [, v0.t]  
+    elif ("xseg" in mnemonic) or ("xei" in mnemonic):
+        if vm == 0:
+            return f"{mnemonic}.v v{vd_vs3}, (x{rs1}), v{lumop_sumop_rs2_vs2}, v0.t"
+        else:
+            return f"{mnemonic}.v v{vd_vs3}, (x{rs1}), v{lumop_sumop_rs2_vs2}"
+
+    # Unit-stride segment: vlseg3e8.v v1, (x1) [, v0.t]
+    # Unit-stride non-segment: vle64.v v1, (x1) [, v0.t]
+    elif ("seg" in mnemonic and (mnemonic.startswith("vl") or mnemonic.startswith("vs"))) or (mnemonic.startswith("vle") or mnemonic.startswith("vse")):
+        if vm == 0:
+            return f"{mnemonic}.v v{vd_vs3}, (x{rs1}), v0.t"
+        else:
+            return f"{mnemonic}.v v{vd_vs3}, (x{rs1})"
+    
+    # TODO scalar FP loads/stores are not part of the RISC-V V spec but are mentioned for some reason I won't be implementing them for now
+    # Scalar FP loads/stores: fld f1, 0(x1)
+    # elif mnemonic.startswith("fl") or mnemonic.startswith("fs"):
+    #     imm = ((instruction >> 20) & 0xFFF) if is_load else (((instruction >> 25) & 0x7F) << 5) | ((instruction >> 7) & 0x1F)
+    #     if imm & 0x800:
+    #         imm = imm - 0x1000
+    #     return f"{mnemonic} ft{vd_vs3}, {imm}(x{rs1})"
+    
+    # Generic format
     else:
-        return f"{full_mnemonic} v{vd_rd}, (x{rs1})"
+        if vm == 0:
+            return f"{mnemonic}.v v{vd_vs3}, (x{rs1}), v0.t"
+        else:
+            return f"{mnemonic}.v v{vd_vs3}, (x{rs1})"
 
 
 def sign_extend_imm5(imm5: int) -> int:
-    """
-    Sign extend a 5-bit immediate value.
-    
-    Returns the sign-extended 32-bit integer (as a signed value)
-    """
+
     imm5 = imm5 & 0x1F
-    # Sign extend: if bit 4 is set, treat as negative
     if imm5 & 0x10:
-        # Sign extend: convert to negative by subtracting 32
         return imm5 - 32
     return imm5
 
+def suffix_calculation(mnemonic: str, category: str, vm: int) -> str:
 
-def format_instruction(mnemonic: str, category: str, vd_rd: int, vs2: int,
-                      vs1_rs1: int, imm5: int, vm: int) -> str:
-    """
-    Format instruction into human-readable string.
-    
-    Returns the formatted instruction string
-    """
-    # Determine suffix based on category
-    suffix_map = {
+    base_suffix_map = {
         'OPIVV': '.vv',
         'OPIVX': '.vx',
         'OPIVI': '.vi',
@@ -708,18 +755,86 @@ def format_instruction(mnemonic: str, category: str, vd_rd: int, vs2: int,
         'OPCFG': '',
     }
     
-    suffix = suffix_map.get(category, '')
-    full_mnemonic = f"{mnemonic}{suffix}"
+    suffix = base_suffix_map.get(category, '')
     
-    # Configuration instructions have special formatting
-    if category == 'OPCFG':
-        if mnemonic == 'vsetvl':
-            return f"{full_mnemonic} x{vd_rd}, x{vs1_rs1}, x{vs2}"
+    # Handle special cases for suffixes based on the mnemonic and category
+    if mnemonic in ['vmadc', 'vmsbc', 'vadc', 'vsbc', 'vmerge', 'vfmerge']:
+        if vm == 0:
+            suffix += 'm'
+            
+    elif mnemonic in ['vnclipu', 'vnclip']:
+        if vm == 0:
+            if category == 'OPIVV':
+                suffix = '.wv'
+            if category == 'OPIVX':
+                suffix = '.wx'
+            elif category == 'OPIVI':
+                suffix = '.wi'
+                
+    elif mnemonic[-2:] == '.w':
+        suffix = 'v' if category in ['OPMVV', 'OPFVV'] else 'x' if category == 'OPMVX' else 'f'
+    
+    elif category in ['OPMVV', 'OPFVV']:
+        if mnemonic in ['vredsum', 'vredmaxu', 'vredmax', 'vredminu', 'vredmin',
+                        'vredand', 'vredor', 'vredxor', 
+                        'vfredusum', 'vfredosum', 'vfredmin', 'vfredmax', 'vfwredusum', 'vfwredosum']:
+            suffix = '.vs'
+        elif mnemonic in ['vmand', 'vmnand', 'vmandn', 'vmxor', 
+                         'vmor', 'vmnor', 'vmorn', 'vmxnor', 'vmandnot', 'vmornot']:
+            suffix = '.mm'
+        elif mnemonic == 'vcompress':
+            suffix = '.vm'
+    return suffix
 
-        elif mnemonic == 'vsetivli':
-            return f"{full_mnemonic} x{vd_rd}, {imm5}, {vs2}"
+def format_instruction(mnemonic: str, category: str, vd_rd: int, vs2: int,
+                      vs1_rs1: int, imm5: int, vm: int, special: bool) -> str:
 
-    # Vector-immediate format
+    # Special operations have a very unique format...
+    if special:
+        if mnemonic in ['vmv.x.s', 'vfmv.f.s', 'vcpop.m', 'vfirst.m']:
+            return f"{mnemonic} x{vd_rd}, v{vs2}"
+        
+        elif mnemonic in ['vmv.s.x', 'vfmv.s.f']:
+            return f"{mnemonic} v{vd_rd}, x{vs1_rs1}"
+        
+        elif mnemonic in ['vzext.vf8', 'vsext.vf8', 'vzext.vf4', 'vsext.vf4',
+                          'vzext.vf2', 'vsext.vf2', 'vmsbf.m', 'vmsof.m', 'vmsif.m', 'viota.m',
+                          'vfcvt.xu.f.v', 'vfcvt.x.f.v', 'vfcvt.f.xu.v', 
+                          'vfcvt.f.x.v', 'vfcvt.rtz.xu.f.v', 'vfcvt.rtz.x.f.v',
+                          'vfwcvt.xu.f.v','vfwcvt.x.f.v','vfwcvt.f.xu.v','vfwcvt.f.x.v','vfwcvt.f.f.v',
+                          'vfwcvt.rtz.xu.f.v','vfwcvt.rtz.x.f.v',
+                          'vfncvt.xu.f.w','vfncvt.x.f.w','vfncvt.f.xu.w','vfncvt.f.x.w','vfncvt.f.f.w',
+                          'vfncvt.rod.f.f.w','vfncvt.rtz.xu.f.w','vfncvt.rtz.x.f.w',
+                          'vfsqrt.v', 'vfrsqrt7.v', 'vfrec7.v', 'vfclass.v']:
+            if vm == 0:
+                return f"{mnemonic} v{vd_rd}, v{vs2}, v0.t"
+            else:
+                return f"{mnemonic} v{vd_rd}, v{vs2}"
+            
+        elif mnemonic == 'vid.v':
+            if vm == 0:
+                return f"{mnemonic} v{vd_rd}, v0.t"
+            else:
+                return f"{mnemonic} v{vd_rd}"
+            
+        else:
+            return f"{mnemonic} v{vd_rd}, v{vs2}"
+    
+    suffix = suffix_calculation(mnemonic, category, vm)
+    full_mnemonic = f"{mnemonic}{suffix}"
+
+    if category in ['OPIVV', 'OPMVV', 'OPFVV']:
+        if vm == 0:
+            return f"{full_mnemonic} v{vd_rd}, v{vs2}, v{vs1_rs1}, v0.t"
+        else:
+            return f"{full_mnemonic} v{vd_rd}, v{vs2}, v{vs1_rs1}"
+
+    elif category in ['OPIVX', 'OPMVX']:
+        if vm == 0:
+            return f"{full_mnemonic} v{vd_rd}, v{vs2}, x{vs1_rs1}, v0.t"
+        else:
+            return f"{full_mnemonic} v{vd_rd}, v{vs2}, x{vs1_rs1}"
+
     elif category == 'OPIVI':
         imm_val = sign_extend_imm5(imm5)
         if vm == 0:
@@ -727,89 +842,43 @@ def format_instruction(mnemonic: str, category: str, vd_rd: int, vs2: int,
         else:
             return f"{full_mnemonic} v{vd_rd}, v{vs2}, {imm_val}"
 
-    # Vector-scalar format
-    elif category == 'OPIVX' or category == 'OPFVF' or category == 'OPMVX':
+    elif category == 'OPFVF':
         if vm == 0:
-            return f"{full_mnemonic} v{vd_rd}, v{vs2}, x{vs1_rs1}, v0.t"
+            return f"{full_mnemonic} v{vd_rd}, v{vs2}, f{vs1_rs1}, v0.t"
         else:
-            return f"{full_mnemonic} v{vd_rd}, v{vs2}, x{vs1_rs1}"
-
-    # Vector-vector format
-    elif category == 'OPIVV' or category == 'OPFVV' or category == 'OPMVV':
-        if vm == 0:
-            return f"{full_mnemonic} v{vd_rd}, v{vs2}, v{vs1_rs1}, v0.t"
-        else:
-            return f"{full_mnemonic} v{vd_rd}, v{vs2}, v{vs1_rs1}"
-
-    # Fallback format
-    else:
-        return f"{full_mnemonic} v{vd_rd}, v{vs2}, v{vs1_rs1}"
+            return f"{full_mnemonic} v{vd_rd}, v{vs2}, f{vs1_rs1}"
     
-    return "UNKNOWN_FORMAT"
-
+    else:
+        return "UNKNOWN FORMAT"
+    
 
 def disassemble_rvv(instruction: int) -> str:
-    """
-    Disassemble a RISC-V Vector Extension instruction.
 
-    Args: instruction - 32-bit instruction word as integer
-    
-    Returns the disassembled instruction string or "UNKNOWN" if the instruction is not a valid RVV instruction
-    """
-    opcode = instruction & 0x7F
-    
-    if opcode == 0x07 or opcode == 0x27:
-        return format_load_store(instruction)
-    
-    if opcode != 0x57:
-        return "UNKNOWN"
-    
-    funct3 = (instruction >> 12) & 0x7
-    category = get_operand_category(funct3)
-    if category is None:
-        return "UNKNOWN"
-    
-    if category == 'OPCFG':
-        vtype = (instruction >> 20) & 0x7FF
-        vs2_lower = vtype & 0x1F
-        funct6_upper = (instruction >> 26) & 0x3F
-        
-        vd_rd = (instruction >> 7) & 0x1F
-        vs1_rs1 = (instruction >> 15) & 0x1F
-        
-        if funct6_upper == 0b100000:
-            imm5 = vs1_rs1
-            vs2 = (vtype >> 5) & 0x1F
-            return f"vsetivli x{vd_rd}, {imm5}, {vs2}"
-        
-        elif vs2_lower == 0b11111:
-            vtype_str = decode_vtype(vtype)
-            return f"vsetvli x{vd_rd}, x{vs1_rs1}, {vtype_str}"
-        
-        else:
-            opcode, funct6, vm, vs2, vs1_rs1, funct3, vd_rd, imm5 = extract_fields(instruction)
-            mnemonic = get_mnemonic(funct6, category, vs2, vs1_rs1, vd_rd)
-            if mnemonic:
-                return format_instruction(mnemonic, category, vd_rd, vs2, vs1_rs1, imm5, vm)
-            # If get_mnemonic returns None, try to decode as vsetvli anyway if it looks like one
-            # (some encodings might not follow the exact pattern)
-            vtype_str = decode_vtype(vtype)
-            if vtype_str != "ILLEGAL":
-                return f"vsetvli x{vd_rd}, x{vs1_rs1}, {vtype_str}"
-    
     opcode, funct6, vm, vs2, vs1_rs1, funct3, vd_rd, imm5 = extract_fields(instruction)
     
-    mnemonic = get_mnemonic(funct6, category, vs2, vs1_rs1, vd_rd)
-    if mnemonic is None:
-        return "UNKNOWN"
+    if opcode == 0x07 or opcode == 0x27:
+        return format_load_store(instruction, opcode, funct3, vd_rd, vs1_rs1, vm)
     
-    return format_instruction(mnemonic, category, vd_rd, vs2, vs1_rs1, imm5, vm)
+    if opcode != 0x57:
+        return "UNKNOWN opcode"
+    
+    category = get_operand_category(funct3)
+    if category is None:
+        return "UNKNOWN func3"
+    
+    if category == 'OPCFG':
+        return format_OPCFG(instruction, vd_rd, vs1_rs1, vs2)
+    
+    mnemonic, special = get_mnemonic(funct6, category, vs2, vs1_rs1)
+    
+    if mnemonic is None:
+        return "UNKNOWN mnemonic"
+    
+    return format_instruction(mnemonic, category, vd_rd, vs2, vs1_rs1, imm5, vm, special)
 
 
 def main():
     """
-    Main entry point for command-line usage.
-    
     Usage:
         python rvv_disassembler.py <instruction>
         python rvv_disassembler.py 0x5e0ec057
